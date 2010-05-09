@@ -33,5 +33,12 @@ conn = psycopg2.connect(dsn)
 print 'Connection established'
 cr = conn.cursor()
 
-cr.execute('SELECT %s::TEXT',(1,))
-print cr.fetchall()
+#cr.execute('SELECT %s::TEXT',(1,))
+#print cr.fetchall()
+
+for i in range(1, 1000):
+    ran = range(1, 1500)
+    qry = 'SELECT (' + ', '.join([ '%s::TEXT' for x in ran]) + ');'
+    cr.execute(qry, [ str(x) for x in ran])
+    # cr.fetchall()
+
