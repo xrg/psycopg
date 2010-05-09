@@ -70,8 +70,6 @@ psyco_isqlquote_getbuffer(isqlquoteObject *self, PyObject *args)
     return Py_None;
 }
 
-
-
 /** the ISQLQuote object **/
 
 
