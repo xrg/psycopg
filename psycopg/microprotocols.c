@@ -160,6 +160,91 @@ microprotocol_getquoted(PyObject *obj, connectionObject *conn)
 }
 
 
+/** Convert obj to raw data value for PQExecParams
+    @param obj the variable to get data from
+    @param pargs a structure with all arrays for PQExecparams
+    @param index the position of the parameter in pargs
+    @param nbuf a pointer to a string buffer for SQL expression
+    @param nlen the resulting length of the sql expression
+    
+    @param return -1 on error, 0 on NO arg eg. AsIS(NULL), 1 when
+                one arg must be added (nlen can be 0 here) or positive
+                when multiple args must be added and nbuf/nlen have
+                to be appended to the query string
+    
+    For most data types, their raw data should be added to the exec
+    params, in the fastest possible path (that is, no conversions).
+    For tuple, we may want the "($1, $2,...)" syntax, which needs
+    the query string to be updated. There, we \b allocate @c nbuf and
+    format the parentheses part in there, return the resulting nbuf
+    length in @c nlen.
+
+    @note that for complex data, we may call this function \b recursively !
+*/
+int
+microprotocol_addparams(PyObject *obj, connectionObject *conn, 
+	struct pq_exec_args *pargs, int index, char** nbuf, int* nlen)
+{
+    PyObject *res = NULL;
+    PyObject *tmp = NULL;
+    int ri = 0;
+    Py_ssize_t len;
+    
+    if (obj == Py_None){
+	pargs->paramValues[index] = NULL;
+	pargs->paramLengths[index] = 0;
+	pargs->paramFormats[index] = 0;
+	Dprintf("output Null at [%d] .", index);
+	return 1;
+    }
+    else if (PyString_Check/*Exact*/(obj)){
+	PyString_AsStringAndSize(obj, &(pargs->paramValues[index]), &len);
+	Dprintf("output string at [%d]%p %.10s..", index, pargs->paramValues[index], pargs->paramValues[index]);
+	pargs->paramLengths[index] = len; // 32->64 bit truncate
+	pargs->paramFormats[index] = 0;
+	pargs->intRefs[index] = 0;
+	return 1;
+    }
+    /*else if (PyInt_Check(obl)){
+	pargs->paramValues[index] = 
+    }*/
+    
+    tmp = microprotocols_adapt(
+        obj, (PyObject*)&isqlquoteType, NULL);
+
+    if (tmp != NULL) {
+        Dprintf("microprotocol_getquoted: adapted to %s",
+                tmp->ob_type->tp_name);
+
+        /* if requested prepare the object passing it the connection */
+        if (PyObject_HasAttrString(tmp, "prepare") && conn) {
+            res = PyObject_CallMethod(tmp, "prepare", "O", (PyObject*)conn);
+            if (res == NULL) {
+                Py_DECREF(tmp);
+                Dprintf("prepare failed!");
+                return -1;
+            }
+            else {
+                Py_DECREF(res);
+            }
+        }
+
+        /* call the getraw method on tmp (that should exist because we
+           adapted to the right protocol) */
+        
+        res = PyObject_CallMethod(tmp, "getraw", NULL);
+        Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
+        if (res == NULL)
+            res = Py_None;
+        Py_DECREF(tmp);
+        ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
+    }
+
+    
+    /* we return res with one extra reference, the caller shall free it */
+    return ri;
+}
+
 /** module-level functions **/
 
 PyObject *

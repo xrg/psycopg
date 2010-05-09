@@ -116,6 +116,16 @@ if ((self)->conn->async_cursor != NULL) {   \
     "while an asynchronous query is underway");                      \
     return NULL; }
 
+struct pq_exec_args {
+	char *command;
+	int nParams;
+	Oid *paramTypes;
+	char **paramValues;;
+	int *paramLengths;
+	int *paramFormats;
+	int *intRefs; /**< if the corresponding paramValue must be freed */
+};
+
 #ifdef __cplusplus
 }
 #endif

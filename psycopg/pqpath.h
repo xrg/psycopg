@@ -37,6 +37,7 @@
 /* exported functions */
 HIDDEN int pq_fetch(cursorObject *curs);
 HIDDEN int pq_execute(cursorObject *curs, const char *query, int async);
+HIDDEN int pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int async);
 HIDDEN int pq_begin_locked(connectionObject *conn, PGresult **pgres,
                            char **error);
 HIDDEN int pq_commit(connectionObject *conn);
