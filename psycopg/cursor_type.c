@@ -267,20 +267,24 @@ void _resize_pargs(struct pq_exec_args *pargs, int nParams){
         if (nParams <= pargs->nParams)
             return;
         nd = nParams - pargs->nParams;
+        pargs->paramTypes = (Oid*) PyMem_Realloc(pargs->paramTypes, nParams* sizeof(Oid));
         pargs->paramValues = (char**) PyMem_Realloc(pargs->paramValues, nParams * sizeof(char*));
         pargs->paramLengths = (int*) PyMem_Realloc(pargs->paramLengths, nParams * sizeof(int));
         pargs->paramFormats = (int*) PyMem_Realloc(pargs->paramFormats, nParams * sizeof(int));
         pargs->intRefs = (int*) PyMem_Realloc(pargs->intRefs,nParams * sizeof(int));
+        memset(pargs->paramTypes + pargs->nParams, '\0', nd * sizeof(Oid));
         memset(pargs->paramValues + pargs->nParams, '\0', nd * sizeof(char*));
         memset(pargs->paramLengths + pargs->nParams, '\0', nd * sizeof(int));
         memset(pargs->paramFormats + pargs->nParams, '\0', nd * sizeof(int));
         memset(pargs->intRefs + pargs->nParams, '\0', nd * sizeof(int));
     }
     else {
+        pargs->paramTypes = (Oid*) PyMem_Malloc(nParams* sizeof(Oid));
         pargs->paramValues = (char**) PyMem_Malloc(nParams * sizeof(char*));
         pargs->paramLengths = (int*) PyMem_Malloc(nParams * sizeof(int));
         pargs->paramFormats = (int*) PyMem_Malloc(nParams * sizeof(int));
         pargs->intRefs = (int*) PyMem_Malloc(nParams * sizeof(int));
+        memset(pargs->paramTypes , '\0', sizeof(Oid));
         memset(pargs->paramValues, '\0', nParams * sizeof(char*));
         memset(pargs->paramLengths, '\0', nParams * sizeof(int));
         memset(pargs->paramFormats, '\0', nParams * sizeof(int));
@@ -290,7 +294,6 @@ void _resize_pargs(struct pq_exec_args *pargs, int nParams){
     }
 
     pargs->nParams = nParams;
-    pargs->paramTypes = NULL;
 }
 
 void _free_pargs(struct pq_exec_args *pargs){
@@ -303,7 +306,8 @@ void _free_pargs(struct pq_exec_args *pargs){
     }
     
     if (pargs->paramValues ){
-	Dprintf("Freeing %d parameters at %p", pargs->nParams, pargs->paramValues);
+        Dprintf("Freeing %d parameters at %p", pargs->nParams, pargs->paramValues);
+        PyMem_Free(pargs->paramTypes);
         PyMem_Free(pargs->paramValues);
         PyMem_Free(pargs->paramLengths);
         PyMem_Free(pargs->paramFormats);
@@ -314,6 +318,7 @@ void _free_pargs(struct pq_exec_args *pargs){
         pargs->command = NULL;
     }
     pargs->nParams = 0;
+    pargs->paramTypes=NULL;
     pargs->paramValues=NULL;
     pargs->paramLengths=NULL;
     pargs->paramFormats=NULL;
