@@ -199,11 +199,12 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	return 1;
     }
     else if (PyString_Check/*Exact*/(obj)){
+	Py_INCREF(obj);
 	PyString_AsStringAndSize(obj, &(pargs->paramValues[index]), &len);
 	Dprintf("output string at [%d]%p %.10s..", index, pargs->paramValues[index], pargs->paramValues[index]);
 	pargs->paramLengths[index] = len; // 32->64 bit truncate
 	pargs->paramFormats[index] = 0;
-	pargs->intRefs[index] = 0;
+	pargs->obRefs[index] = obj;
 	return 1;
     }
     else if (PyInt_Check(obj)){
@@ -212,7 +213,6 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	pargs->paramTypes[index] = INT4OID;
 	pargs->paramLengths[index] = sizeof(int32_t);
 	pargs->paramFormats[index] = 1;
-	pargs->intRefs[index] = 1; /* must be freed */
 	return 1;
     }
     
