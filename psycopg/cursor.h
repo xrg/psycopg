@@ -123,7 +123,9 @@ struct pq_exec_args {
 	char **paramValues;;
 	int *paramLengths;
 	int *paramFormats;
-	int *intRefs; /**< if the corresponding paramValue must be freed */
+	    /**if the corresponding paramValue is the buffer of some
+	    object, hold a reference to that, and dec it after use.*/
+	PyObject **obRefs;
 };
 
 #ifdef __cplusplus
