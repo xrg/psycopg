@@ -26,7 +26,6 @@ ENV_BIN = $(ENV_DIR)/bin
 ENV_LIB = $(ENV_DIR)/lib
 
 SOURCE_C := $(wildcard psycopg/*.c psycopg/*.h)
-SOURCE_PY := $(wildcard lib/*.py)
 SOURCE_TESTS := $(wildcard tests/*.py)
 SOURCE_DOC := $(wildcard doc/src/*.rst)
 SOURCE := $(SOURCE_C) $(SOURCE_PY) $(SOURCE_TESTS) $(SOURCE_DOC)
@@ -68,6 +67,9 @@ docs-txt: doc/psycopg2.txt
 docs-zip: doc/docs.zip
 
 sdist: $(SDIST)
+
+buildonly:
+	@python ./setup.py build
 
 # The environment is currently required to build the documentation.
 # It is not clean by 'make clean'
