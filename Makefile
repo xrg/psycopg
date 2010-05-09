@@ -4,7 +4,7 @@ PYTHON = python$(PYTHON_VERSION)
 TESTDB = psycopg2_test
 
 all:
-	@:
+	@python ./setup.py build
 
 check:
 	@echo "* Creating $(TESTDB)"
