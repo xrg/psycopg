@@ -1001,6 +1001,116 @@ pq_get_last_result(connectionObject *conn)
 
     return result;
 }
+/* pq_execute_params - execute a query, possibly asynchronously
+
+   this fucntion locks the connection object
+   this function call Py_*_ALLOW_THREADS macros */
+
+int
+pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int async)
+{
+    PGresult *pgres = NULL;
+    char *error = NULL;
+    int async_status = ASYNC_WRITE;
+
+    /* if the status of the connection is critical raise an exception and
+       definitely close the connection */
+    if (curs->conn->critical) {
+        pq_resolve_critical(curs->conn, 1);
+        return -1;
+    }
+
+    /* check status of connection, raise error if not OK */
+    if (PQstatus(curs->conn->pgconn) != CONNECTION_OK) {
+        Dprintf("pq_execute: connection NOT OK");
+        PyErr_SetString(OperationalError, PQerrorMessage(curs->conn->pgconn));
+        return -1;
+    }
+    Dprintf("curs_execute: pg connection at %p OK", curs->conn->pgconn);
+
+    Py_BEGIN_ALLOW_THREADS;
+    pthread_mutex_lock(&(curs->conn->lock));
+
+    if (pq_begin_locked(curs->conn, &pgres, &error) < 0) {
+        pthread_mutex_unlock(&(curs->conn->lock));
+        Py_BLOCK_THREADS;
+        pq_complete_error(curs->conn, &pgres, &error);
+        return -1;
+    }
+
+    if (async == 0) {
+        IFCLEARPGRES(curs->pgres);
+        Dprintf("pq_execute: executing SYNC query:");
+        Dprintf("    %-.200s", pargs->command);
+        curs->pgres = PQexecParams(curs->conn->pgconn, pargs->command,
+                pargs->nParams, pargs->paramTypes,
+                (const char* const* )pargs->paramValues,
+                pargs->paramLengths, pargs->paramFormats, 0 /*todo: binary*/);
+        /* dont let pgres = NULL go to pq_fetch() */
+        if (curs->pgres == NULL) {
+            pthread_mutex_unlock(&(curs->conn->lock));
+            Py_BLOCK_THREADS;
+            PyErr_SetString(OperationalError,
+                            PQerrorMessage(curs->conn->pgconn));
+            return -1;
+        }
+    }
+
+    else if (async == 1) {
+        int ret;
+
+        Dprintf("pq_execute: executing ASYNC query:");
+        Dprintf("    %-.200s", pargs->command);
+
+        IFCLEARPGRES(curs->pgres);
+        if (PQsendQueryParams(curs->conn->pgconn, pargs->command,
+                pargs->nParams, pargs->paramTypes, 
+                (const char* const* )pargs->paramValues,
+                pargs->paramLengths, 
+                pargs->paramFormats, 0 /*todo: binary*/) == 0) {
+            pthread_mutex_unlock(&(curs->conn->lock));
+            Py_BLOCK_THREADS;
+            PyErr_SetString(OperationalError,
+                            PQerrorMessage(curs->conn->pgconn));
+            return -1;
+        }
+        Dprintf("pq_execute: async query sent to backend");
+
+        ret = PQflush(curs->conn->pgconn);
+        if (ret == 0) {
+            /* the query got fully sent to the server */
+            Dprintf("pq_execute: query got flushed immediately");
+            /* the async status will be ASYNC_READ */
+            async_status = ASYNC_READ;
+        }
+        else if (ret == 1) {
+            /* not all of the query got sent to the server */
+            async_status = ASYNC_WRITE;
+        }
+        else {
+            /* there was an error */
+            return -1;
+        }
+    }
+
+    pthread_mutex_unlock(&(curs->conn->lock));
+    Py_END_ALLOW_THREADS;
+
+    /* if the execute was sync, we call pq_fetch() immediately,
+       to respect the old DBAPI-2.0 compatible behaviour */
+    if (async == 0) {
+        Dprintf("pq_execute: entering syncronous DBAPI compatibility mode");
+        if (pq_fetch(curs) == -1) return -1;
+    }
+    else {
+        curs->conn->async_status = async_status;
+        Py_INCREF(curs);
+        curs->conn->async_cursor = (PyObject*)curs;
+    }
+
+    return 1-async;
+}
+
 
 /* pq_fetch - fetch data after a query
 

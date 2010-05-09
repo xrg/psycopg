@@ -37,6 +37,8 @@ extern "C" {
 
 extern HIDDEN PyObject *psyco_adapters;
 
+struct pq_exec_args;
+
 /** the names of the three mandatory methods **/
 
 #define MICROPROTOCOLS_GETQUOTED_NAME "getquoted"
@@ -57,6 +59,11 @@ HIDDEN PyObject *microprotocol_getquoted(
 
 HIDDEN PyObject *
     psyco_microprotocols_adapt(cursorObject *self, PyObject *args);
+    
+HIDDEN int
+    microprotocol_addparams(PyObject *obj, connectionObject *conn, 
+        struct pq_exec_args *pargs, int index, char** nbuf, int* nlen);
+
 #define psyco_microprotocols_adapt_doc \
     "adapt(obj, protocol, alternate) -> object -- adapt obj to given protocol"
 
