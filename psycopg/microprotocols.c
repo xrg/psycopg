@@ -159,6 +159,7 @@ microprotocol_getquoted(PyObject *obj, connectionObject *conn)
     return res;
 }
 
+#include "pgtypes.h"
 
 /** Convert obj to raw data value for PQExecParams
     @param obj the variable to get data from
@@ -205,9 +206,15 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	pargs->intRefs[index] = 0;
 	return 1;
     }
-    /*else if (PyInt_Check(obl)){
-	pargs->paramValues[index] = 
-    }*/
+    else if (PyInt_Check(obj)){
+	pargs->paramValues[index] = PyMem_Malloc(sizeof(int32_t));
+	*((int32_t *) pargs->paramValues[index]) = htonl(PyInt_AsLong(obj));
+	pargs->paramTypes[index] = INT4OID;
+	pargs->paramLengths[index] = sizeof(int32_t);
+	pargs->paramFormats[index] = 1;
+	pargs->intRefs[index] = 1; /* must be freed */
+	return 1;
+    }
     
     tmp = microprotocols_adapt(
         obj, (PyObject*)&isqlquoteType, NULL);
@@ -233,6 +240,8 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
            adapted to the right protocol) */
         
         res = PyObject_CallMethod(tmp, "getraw", NULL);
+        if (res == NULL)
+            return -1;
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         if (res == NULL)
             res = Py_None;
