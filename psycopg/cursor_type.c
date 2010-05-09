@@ -264,29 +264,29 @@ void _init_pargs(struct pq_exec_args *pargs){
 void _resize_pargs(struct pq_exec_args *pargs, int nParams){
     int nd;
     if (pargs->nParams && pargs->paramValues){
-	if (nParams <= pargs->nParams)
-	    return;
-	nd = nParams - pargs->nParams;
-	pargs->paramValues = (char**) PyMem_Realloc(pargs->paramValues, nParams * sizeof(char*));
-	pargs->paramLengths = (int*) PyMem_Realloc(pargs->paramLengths, nParams * sizeof(int));
-	pargs->paramFormats = (int*) PyMem_Realloc(pargs->paramFormats, nParams * sizeof(int));
-	pargs->intRefs = (int*) PyMem_Realloc(pargs->intRefs,nParams * sizeof(int));
-	memset(pargs->paramValues + pargs->nParams, '\0', nd * sizeof(char*));
-	memset(pargs->paramLengths + pargs->nParams, '\0', nd * sizeof(int));
-	memset(pargs->paramFormats + pargs->nParams, '\0', nd * sizeof(int));
-	memset(pargs->intRefs + pargs->nParams, '\0', nd * sizeof(int));
+        if (nParams <= pargs->nParams)
+            return;
+        nd = nParams - pargs->nParams;
+        pargs->paramValues = (char**) PyMem_Realloc(pargs->paramValues, nParams * sizeof(char*));
+        pargs->paramLengths = (int*) PyMem_Realloc(pargs->paramLengths, nParams * sizeof(int));
+        pargs->paramFormats = (int*) PyMem_Realloc(pargs->paramFormats, nParams * sizeof(int));
+        pargs->intRefs = (int*) PyMem_Realloc(pargs->intRefs,nParams * sizeof(int));
+        memset(pargs->paramValues + pargs->nParams, '\0', nd * sizeof(char*));
+        memset(pargs->paramLengths + pargs->nParams, '\0', nd * sizeof(int));
+        memset(pargs->paramFormats + pargs->nParams, '\0', nd * sizeof(int));
+        memset(pargs->intRefs + pargs->nParams, '\0', nd * sizeof(int));
     }
     else {
-	pargs->paramValues = (char**) PyMem_Malloc(nParams * sizeof(char*));
-	pargs->paramLengths = (int*) PyMem_Malloc(nParams * sizeof(int));
-	pargs->paramFormats = (int*) PyMem_Malloc(nParams * sizeof(int));
-	pargs->intRefs = (int*) PyMem_Malloc(nParams * sizeof(int));
-	memset(pargs->paramValues, '\0', nParams * sizeof(char*));
-	memset(pargs->paramLengths, '\0', nParams * sizeof(int));
-	memset(pargs->paramFormats, '\0', nParams * sizeof(int));
-	memset(pargs->intRefs, '\0', nParams * sizeof(int));
-	Dprintf ("Created %d args at %p", nParams, pargs->paramValues);
-	//PyMem_Free(pargs->paramValues);
+        pargs->paramValues = (char**) PyMem_Malloc(nParams * sizeof(char*));
+        pargs->paramLengths = (int*) PyMem_Malloc(nParams * sizeof(int));
+        pargs->paramFormats = (int*) PyMem_Malloc(nParams * sizeof(int));
+        pargs->intRefs = (int*) PyMem_Malloc(nParams * sizeof(int));
+        memset(pargs->paramValues, '\0', nParams * sizeof(char*));
+        memset(pargs->paramLengths, '\0', nParams * sizeof(int));
+        memset(pargs->paramFormats, '\0', nParams * sizeof(int));
+        memset(pargs->intRefs, '\0', nParams * sizeof(int));
+        Dprintf ("Created %d args at %p", nParams, pargs->paramValues);
+        //PyMem_Free(pargs->paramValues);
     }
 
     pargs->nParams = nParams;
@@ -369,7 +369,7 @@ int resize_charbuf(char** buf, char** rptr,
 /* mogrify a query string and build argument array or dict */
 static int
 _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn, 
-	struct pq_exec_args *pargs)
+        struct pq_exec_args *pargs)
 {
     PyObject *key, *value, *item;
     char *d, *c, *c_begin;
