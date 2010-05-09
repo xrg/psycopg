@@ -542,6 +542,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
                         rs += i;
                     }
                     oindex += ri;
+                    Py_DECREF(value);
                 }
                 
                 Dprintf("_mogrify_execparams: after value refcnt: "
@@ -605,6 +606,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
                     rs += i;
                 }
                 oindex += ri;
+                Py_DECREF(value);
             }
             
             Dprintf("_mogrify_execparams: after value refcnt: "
