@@ -37,9 +37,20 @@
 #include "psycopg/microprotocols_proto.h"
 
 
+#include "pgtypes.h"
+
 /** the adapters registry **/
 
 PyObject *psyco_adapters;
+
+/** the fast-path py2bin registry */
+microprotocols_py2bin *psyco_py2bins = 0;
+
+static int _psyco_str2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt );
+
+static int _psyco_int2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt );
 
 /* microprotocols_init - initialize the adapters dictionary */
 
@@ -52,6 +63,12 @@ microprotocols_init(PyObject *dict)
     }
 
     PyDict_SetItemString(dict, "adapters", psyco_adapters);
+    
+    psyco_py2bins = PyMem_New(microprotocols_py2bin, 10);
+    memset(psyco_py2bins, '\0', sizeof(microprotocols_py2bin) * 10);
+    microprotocols_addbin(&PyString_Type, NULL, _psyco_str2bin);
+    microprotocols_addbin(&PyInt_Type, NULL, _psyco_int2bin);
+    
 
     return 0;
 }
@@ -71,6 +88,17 @@ microprotocols_add(PyTypeObject *type, PyObject *proto, PyObject *cast)
                    cast);
     return 0;
 }
+
+/** Add one type to the fast-path registry */
+int microprotocols_addbin(PyTypeObject * pyType, psyco_checkfn checkFn,
+                                 psyco_py2bin convFn){
+    microprotocols_py2bin *p2b;
+    for (p2b = psyco_py2bins; p2b->pyType ; p2b++);
+    p2b->pyType = pyType;
+    p2b->checkFn = checkFn;
+    p2b->convFn = convFn;
+}
+
 
 /* microprotocols_adapt - adapt an object to the built-in protocol */
 
@@ -159,7 +187,6 @@ microprotocol_getquoted(PyObject *obj, connectionObject *conn)
     return res;
 }
 
-#include "pgtypes.h"
 
 /** Convert obj to raw data value for PQExecParams
     @param obj the variable to get data from
@@ -188,8 +215,10 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 {
     PyObject *res = NULL;
     PyObject *tmp = NULL;
-    int ri = 0;
+    int ri = 0 ;
     Py_ssize_t len;
+    microprotocols_py2bin *p2b;
+    
     
     if (obj == Py_None){
 	pargs->paramValues[index] = NULL;
@@ -198,23 +227,29 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	Dprintf("output Null at [%d] .", index);
 	return 1;
     }
-    else if (PyString_Check/*Exact*/(obj)){
-	Py_INCREF(obj);
-	PyString_AsStringAndSize(obj, &(pargs->paramValues[index]), &len);
-	Dprintf("output string at [%d]%p %.10s..", index, pargs->paramValues[index], pargs->paramValues[index]);
-	pargs->paramLengths[index] = len; // 32->64 bit truncate
-	pargs->paramFormats[index] = 0;
-	pargs->obRefs[index] = obj;
-	return 1;
-    }
-    else if (PyInt_Check(obj)){
-	pargs->paramValues[index] = PyMem_Malloc(sizeof(int32_t));
-	*((int32_t *) pargs->paramValues[index]) = htonl(PyInt_AsLong(obj));
-	pargs->paramTypes[index] = INT4OID;
-	pargs->paramLengths[index] = sizeof(int32_t);
-	pargs->paramFormats[index] = 1;
-	return 1;
-    }
+    
+    for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
+	if (p2b->pyType == obj->ob_type){
+	    ri = p2b->convFn(obj, pargs->paramValues+index,
+			pargs->paramLengths+index, &pargs->paramTypes[index],
+			&pargs->obRefs[index], &pargs->paramFormats[index]);
+	    if (ri < 0)
+		break; /* assuming none of the other out args has been set */
+	    Dprintf("Adapted [%d] %s by object type: %d ",index, obj->ob_type->tp_name, ri);
+	    return ri;
+	}
+	
+    /* try again with the check function */
+    for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
+	if (p2b->checkFn && (p2b->checkFn)(obj)){
+	    ri = p2b->convFn(obj, &pargs->paramValues[index],
+			&pargs->paramLengths[index], &pargs->paramTypes[index],
+			&pargs->obRefs[index], &pargs->paramFormats[index]);
+	    if (ri < 0)
+		break; /* assuming none of the other out args has been set */
+	    Dprintf("Adapted %s by object check ", obj->ob_type->tp_name);
+	    return ri;
+	}
     
     tmp = microprotocols_adapt(
         obj, (PyObject*)&isqlquoteType, NULL);
@@ -265,3 +300,27 @@ psyco_microprotocols_adapt(cursorObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "O|OO", &obj, &proto, &alt)) return NULL;
     return microprotocols_adapt(obj, proto, alt);
 }
+
+
+int _psyco_str2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt ){
+	Py_INCREF(obj);
+	Py_ssize_t slen;
+	PyString_AsStringAndSize(obj, data, &slen);
+	*len = slen; /* we don't handle more than 3GB here */
+	*fmt = 0;
+	*obRef = obj;
+	return 1;
+}
+
+int _psyco_int2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt ){
+	*data = PyMem_Malloc(sizeof(int32_t));
+	*((int32_t *) *data) = htonl(PyInt_AsLong(obj));
+	*ptype = INT4OID;
+	*len = sizeof(int32_t);
+	*fmt = 1;
+	return 1;
+}
+
+/*eof*/

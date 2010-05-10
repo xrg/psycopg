@@ -40,7 +40,32 @@ extern "C" {
 
 extern HIDDEN PyObject *psyco_adapters;
 
-struct pq_exec_args;
+/** Fast-path to binary exporters */
+
+/** Convert a Python object to postgres bin value.
+
+    This is a strict C function, we try to avoid python object 
+    allocations.
+    @param val the objecct to convert to binary IN
+    @param data place the buffer to the data here.(may cast from void*) OUT
+    @param len the length of the data buffer OUT
+    @param ptype the Oid (if binary) of the data OUT
+    @param isref if the val object should be referenced until data is
+		freed OUT
+    @param fmt  0 if data is text, 1 if binary OUT
+*/
+    
+
+typedef int (*psyco_py2bin)(PyObject *val, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt );
+
+typedef int (*psyco_checkfn)(PyObject* ob);
+
+typedef struct {
+	PyTypeObject * pyType;
+	psyco_checkfn  checkFn;
+	psyco_py2bin   convFn;
+} microprotocols_py2bin;
 
 /** the names of the three mandatory methods **/
 
@@ -54,6 +79,10 @@ struct pq_exec_args;
 HIDDEN int microprotocols_init(PyObject *dict);
 HIDDEN int microprotocols_add(
     PyTypeObject *type, PyObject *proto, PyObject *cast);
+
+/** register a fn for python->pg-bin conversion */
+HIDDEN int microprotocols_addbin(PyTypeObject * pyType, psyco_checkfn checkFn,
+                                 psyco_py2bin convFn);
 
 HIDDEN PyObject *microprotocols_adapt(
     PyObject *obj, PyObject *proto, PyObject *alt);
