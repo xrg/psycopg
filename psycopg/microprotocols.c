@@ -221,35 +221,35 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
     
     
     if (obj == Py_None){
-	pargs->paramValues[index] = NULL;
-	pargs->paramLengths[index] = 0;
-	pargs->paramFormats[index] = 0;
-	Dprintf("output Null at [%d] .", index);
-	return 1;
+        pargs->paramValues[index] = NULL;
+        pargs->paramLengths[index] = 0;
+        pargs->paramFormats[index] = 0;
+        Dprintf("output Null at [%d] .", index);
+        return 1;
     }
     
     for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
-	if (p2b->pyType == obj->ob_type){
-	    ri = p2b->convFn(obj, pargs->paramValues+index,
-			pargs->paramLengths+index, &pargs->paramTypes[index],
-			&pargs->obRefs[index], &pargs->paramFormats[index]);
-	    if (ri < 0)
-		break; /* assuming none of the other out args has been set */
-	    Dprintf("Adapted [%d] %s by object type: %d ",index, obj->ob_type->tp_name, ri);
-	    return ri;
-	}
-	
+        if (p2b->pyType == obj->ob_type){
+            ri = p2b->convFn(obj, pargs->paramValues+index,
+                        pargs->paramLengths+index, &pargs->paramTypes[index],
+                        &pargs->obRefs[index], &pargs->paramFormats[index]);
+            if (ri < 0)
+                break; /* assuming none of the other out args has been set */
+            Dprintf("Adapted [%d] %s by object type: %d ",index, obj->ob_type->tp_name, ri);
+            return ri;
+        }
+        
     /* try again with the check function */
     for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
-	if (p2b->checkFn && (p2b->checkFn)(obj)){
-	    ri = p2b->convFn(obj, &pargs->paramValues[index],
-			&pargs->paramLengths[index], &pargs->paramTypes[index],
-			&pargs->obRefs[index], &pargs->paramFormats[index]);
-	    if (ri < 0)
-		break; /* assuming none of the other out args has been set */
-	    Dprintf("Adapted %s by object check ", obj->ob_type->tp_name);
-	    return ri;
-	}
+        if (p2b->checkFn && (p2b->checkFn)(obj)){
+            ri = p2b->convFn(obj, &pargs->paramValues[index],
+                        &pargs->paramLengths[index], &pargs->paramTypes[index],
+                        &pargs->obRefs[index], &pargs->paramFormats[index]);
+            if (ri < 0)
+                break; /* assuming none of the other out args has been set */
+            Dprintf("Adapted %s by object check ", obj->ob_type->tp_name);
+            return ri;
+        }
     
     tmp = microprotocols_adapt(
         obj, (PyObject*)&isqlquoteType, NULL);
