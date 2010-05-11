@@ -416,6 +416,7 @@ int _psyco_str2bin(PyObject *obj, char** data, int* len,
 	Py_ssize_t slen;
 	PyString_AsStringAndSize(obj, data, &slen);
 	*len = slen; /* we don't handle more than 3GB here */
+	*ptype = VARCHAROID;
 	*fmt = 0;
 	*obRef = obj;
 	return 1;
