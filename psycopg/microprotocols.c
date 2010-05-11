@@ -255,8 +255,8 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         obj, (PyObject*)&isqlquoteType, NULL);
 
     if (tmp != NULL) {
-        Dprintf("microprotocol_getquoted: adapted to %s",
-                tmp->ob_type->tp_name);
+        Dprintf("microprotocol_getquoted: adapted %s to %s",
+                obj->ob_type->tp_name, tmp->ob_type->tp_name);
 
         /* if requested prepare the object passing it the connection */
         if (PyObject_HasAttrString(tmp, "prepare") && conn) {
@@ -278,8 +278,6 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         if (res == NULL)
             return -1;
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
-        if (res == NULL)
-            res = Py_None;
         Py_DECREF(tmp);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
     }
