@@ -165,6 +165,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
     char *d, *c, *c_begin;
     int kind = 0, nParams = 0, index = 0, oindex = 0;
     int i, ri;
+    int is_multi = 0;
     
     /* The command buffer. We avoid a python object, because we don't really
     want one. We allocate cmd_alloc bytes, when our estimates need cmdlen.
@@ -247,6 +248,14 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
             c+=2;
         }
         else {
+	    if ( *c == ';'){
+		Dprintf("locate semicolon");
+		is_multi ++;
+	    }
+	    else if (is_multi && ! isspace(*c)){
+		Dprintf("This algo cannot handle multiple queries!");
+		return -2;
+	    }
             c++;
             cmdlen++;
         }
@@ -451,6 +460,8 @@ _psyco_curs_execute2(cursorObject *self,
             goto fail;
         else if (mres == -2){ /* retry the old way */
             Dprintf("Fallback to the old pq_execute code");
+            psyco_set_error(ProgrammingError, (PyObject*) self,
+                        "Old path not supported", NULL, NULL);
             /* TODO */
             goto fail;
         }
