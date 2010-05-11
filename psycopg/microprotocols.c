@@ -47,6 +47,9 @@ static int _psyco_str2bin(PyObject *obj, char** data, int* len,
 static int _psyco_int2bin(PyObject *obj, char** data, int* len, 
 			    Oid* ptype, PyObject **obref, int* fmt );
 
+static int _psyco_long2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt );
+
 /* microprotocols_init - initialize the adapters dictionary */
 
 int
@@ -63,6 +66,7 @@ microprotocols_init(PyObject *dict)
     memset(psyco_py2bins, '\0', sizeof(microprotocols_py2bin) * 10);
     microprotocols_addbin(&PyString_Type, NULL, _psyco_str2bin);
     microprotocols_addbin(&PyInt_Type, NULL, _psyco_int2bin);
+    microprotocols_addbin(&PyLong_Type, NULL, _psyco_int2bin);
     
 
     return 0;
@@ -423,6 +427,16 @@ int _psyco_int2bin(PyObject *obj, char** data, int* len,
 	*((int32_t *) *data) = htonl(PyInt_AsLong(obj));
 	*ptype = INT4OID;
 	*len = sizeof(int32_t);
+	*fmt = 1;
+	return 1;
+}
+
+int _psyco_long2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt ){
+	*data = PyMem_Malloc(sizeof(int64_t));
+	*((int64_t *) *data) = htonl(PyLong_AsLong(obj));
+	*ptype = INT8OID;
+	*len = sizeof(int64_t);
 	*fmt = 1;
 	return 1;
 }
