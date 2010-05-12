@@ -231,7 +231,11 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         Dprintf("output Null at [%d] .", index);
         return 1;
     }
-    
+    else if ( obj == Py_True || obj == Py_False)
+        return _psyco_bool2bin(obj, pargs->paramValues+index,
+                        pargs->paramLengths+index, &pargs->paramTypes[index],
+                        &pargs->obRefs[index], &pargs->paramFormats[index]);
+
     for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
         if (p2b->pyType == obj->ob_type){
             ri = p2b->convFn(obj, pargs->paramValues+index,
@@ -332,6 +336,19 @@ int _psyco_long2bin(PyObject *obj, char** data, int* len,
 	*((int64_t *) *data) = htonl(PyLong_AsLong(obj));
 	*ptype = INT8OID;
 	*len = sizeof(int64_t);
+	*fmt = 1;
+	return 1;
+}
+
+int _psyco_bool2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt ){
+	*data = PyMem_Malloc(1);
+	if (obj  == Py_True)
+	    *((char*) *data)  = 1;
+	else
+	    *((char*) *data)  = 0;
+	*ptype = BOOLOID;
+	*len = 1;
 	*fmt = 1;
 	return 1;
 }

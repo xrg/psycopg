@@ -284,7 +284,7 @@ void _resize_pargs(struct pq_exec_args *pargs, int nParams){
         pargs->paramLengths = (int*) PyMem_Malloc(nParams * sizeof(int));
         pargs->paramFormats = (int*) PyMem_Malloc(nParams * sizeof(int));
         pargs->obRefs = (PyObject**) PyMem_Malloc(nParams * sizeof(PyObject*));
-        memset(pargs->paramTypes , '\0', sizeof(Oid));
+        memset(pargs->paramTypes , '\0', nParams * sizeof(Oid));
         memset(pargs->paramValues, '\0', nParams * sizeof(char*));
         memset(pargs->paramLengths, '\0', nParams * sizeof(int));
         memset(pargs->paramFormats, '\0', nParams * sizeof(int));
