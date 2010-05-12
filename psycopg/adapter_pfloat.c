@@ -119,6 +119,8 @@ static struct PyMemberDef pfloatObject_members[] = {
 static PyMethodDef pfloatObject_methods[] = {
     {"getquoted", (PyCFunction)pfloat_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
+    {"getraw", (PyCFunction)pfloat_getquoted, METH_VARARGS,
+     "getraw() -> wrapped object value as raw string, identical to getquoted()"},
     {"__conform__", (PyCFunction)pfloat_conform, METH_VARARGS, NULL},
     {NULL}  /* Sentinel */
 };
