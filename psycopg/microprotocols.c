@@ -63,6 +63,10 @@ static int _psyco_long2bin(PyObject *obj, char** data, int* len,
 			    Oid* ptype, PyObject **obref, int* fmt,
 			    connectionObject *conn);
 
+static int _psyco_float2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
+
 /* microprotocols_init - initialize the adapters dictionary */
 
 int
@@ -82,6 +86,7 @@ microprotocols_init(PyObject *dict)
     microprotocols_addbin(&PyInt_Type, NULL, _psyco_int2bin);
     microprotocols_addbin(&PyLong_Type, NULL, _psyco_int2bin);
     microprotocols_addbin(&PyUnicode_Type, NULL, _psyco_ustr2bin);
+    microprotocols_addbin(&PyFloat_Type, NULL, _psyco_float2bin);
 
     return 0;
 }
@@ -422,6 +427,28 @@ int _psyco_ustr2bin(PyObject *obj, char** data, int* len,
     *fmt = 1;
     *obRef = str;
     return 1;
+}
+
+int _psyco_float2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
+	double dn = PyFloat_AsDouble(obj);
+	*data = PyMem_Malloc(sizeof(double));
+	uint32_t *ptr = (uint32_t *) *data;
+	
+	/* Note: we use pointer-level casting, because (uint) a_float will
+	   implicitly convert the numeric value */
+	if (sizeof(double) == 8){
+	    *ptype = FLOAT8OID;
+	    *ptr = htonl((uint32_t) ( *((uint64_t *)&dn) >> 32));
+	    ptr++;
+	}else
+	    *ptype = FLOAT4OID;
+
+	*ptr = htonl(*((uint32_t *)&dn));
+	*len = sizeof(double);
+	*fmt = 1;
+	return 1;
 }
 
 /*eof*/
