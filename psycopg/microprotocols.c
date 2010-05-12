@@ -35,6 +35,7 @@
 #include "psycopg/connection.h"
 #include "psycopg/microprotocols.h"
 #include "psycopg/microprotocols_proto.h"
+#include "psycopg/adapter_asis.h"
 
 
 #include "pgtypes.h"
@@ -297,6 +298,12 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         Py_DECREF(tmp);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
+	if (ri == 1 && (tmp->ob_type == &asisType) &&
+		pargs->paramFormats[index] == 0){
+	    /* We should let the backend find out the type, because
+	       we cannot tell where the AsIs came from */
+	    pargs->paramTypes[index] = 0;
+	}
     }
 
     
