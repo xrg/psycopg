@@ -67,6 +67,10 @@ static int _psyco_float2bin(PyObject *obj, char** data, int* len,
 			    Oid* ptype, PyObject **obref, int* fmt,
 			    connectionObject *conn);
 
+static int _psyco_buf2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
+
 /* microprotocols_init - initialize the adapters dictionary */
 
 int
@@ -87,6 +91,7 @@ microprotocols_init(PyObject *dict)
     microprotocols_addbin(&PyLong_Type, NULL, _psyco_int2bin);
     microprotocols_addbin(&PyUnicode_Type, NULL, _psyco_ustr2bin);
     microprotocols_addbin(&PyFloat_Type, NULL, _psyco_float2bin);
+    microprotocols_addbin(&PyBuffer_Type, NULL, _psyco_buf2bin);
 
     return 0;
 }
@@ -448,6 +453,21 @@ int _psyco_float2bin(PyObject *obj, char** data, int* len,
 	*ptr = htonl(*((uint32_t *)&dn));
 	*len = sizeof(double);
 	*fmt = 1;
+	return 1;
+}
+
+int _psyco_buf2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
+    
+	Py_INCREF(obj);
+	Py_ssize_t blen;
+	if (PyObject_AsReadBuffer(obj, (const void **)data, &blen) < 0)
+	    return -1;
+	*ptype = BYTEAOID;
+	*len = blen;
+	*fmt = 1;
+	*obRef = obj;
 	return 1;
 }
 

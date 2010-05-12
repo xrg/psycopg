@@ -186,6 +186,19 @@ binary_str(binaryObject *self)
 }
 
 static PyObject *
+binary_getraw(binaryObject *self, PyObject* args)
+{
+
+        if (!PyArg_ParseTuple(args, "")) return NULL;
+
+    /* if we got a plain string or a buffer we escape it and save the buffer */
+    if (PyBuffer_Check(self->wrapped))
+	return self->wrapped;
+   
+    return PyBuffer_FromObject(self->wrapped, 0L, Py_END_OF_BUFFER);
+}
+
+static PyObject *
 binary_getquoted(binaryObject *self, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, "")) return NULL;
@@ -241,6 +254,8 @@ static struct PyMemberDef binaryObject_members[] = {
 static PyMethodDef binaryObject_methods[] = {
     {"getquoted", (PyCFunction)binary_getquoted, METH_VARARGS,
      "getquoted() -> wrapped object value as SQL-quoted binary string"},
+    {"getraw", (PyCFunction)binary_getraw, METH_VARARGS,
+     "getraw() -> get buffer.Buffer with raw data."},
     {"prepare", (PyCFunction)binary_prepare, METH_VARARGS,
      "prepare(conn) -> prepare for binary encoding using conn"},
     {"__conform__", (PyCFunction)binary_conform, METH_VARARGS, NULL},
