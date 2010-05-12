@@ -68,15 +68,16 @@ if options.regulars:
     print cr.fetchall()
     
     try:
-	print "Multi cmds:"
-	cr.execute("SELECT '%s'; SELECT '2' ;", (1,))
-	print cr.fetchall()
+        print "Multi cmds:"
+        cr.execute("SELECT '%s'; SELECT '2' ;", (1,))
+        print cr.fetchall()
     except psycopg2.ProgrammingError, e:
-	print "Programming error:", e
-	pass
+        print "Programming error:", e
+        pass
     
     print "Several types:"
-    cr.execute('SELECT %s,%s,%s,%s; ', (1, 1L, -1, 'str1', None))
+    cr.execute('SELECT %s,%s,%s,%s, %s::TEXT, %s, %s; ', 
+        (1, 1L, -1, 'str1', None, True, False))
     print "Result:", cr.fetchall()
     
     
@@ -85,6 +86,6 @@ if options.stress:
     ran = range(1, 1500)
     qry = 'SELECT (' + ', '.join([ '%s' for x in ran]) + ');'
     for i in range(1, 1000):
-	cr.execute(qry, ran)
-	res = cr.fetchall()
+        cr.execute(qry, ran)
+        res = cr.fetchall()
 
