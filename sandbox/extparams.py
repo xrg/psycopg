@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import os
 
@@ -76,8 +77,8 @@ if options.regulars:
         pass
     
     print "Several types:"
-    cr.execute('SELECT %s,%s,%s,%s, %s::TEXT, %s, %s; ', 
-        (1, 1L, -1, 'str1', None, True, False))
+    cr.execute('SELECT %s,%s,%s,%s, %s::TEXT, %s, %s, %s; ', 
+        (1, 1L, -1, 'str1', None, True, False, u'Δοκιμή'))
     print "Result:", cr.fetchall()
     
     

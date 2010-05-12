@@ -47,13 +47,20 @@ PyObject *psyco_adapters;
 microprotocols_py2bin *psyco_py2bins = 0;
 
 static int _psyco_str2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obref, int* fmt );
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
+
+static int _psyco_ustr2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
 
 static int _psyco_int2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obref, int* fmt );
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
 
 static int _psyco_long2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obref, int* fmt );
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
 
 /* microprotocols_init - initialize the adapters dictionary */
 
@@ -72,7 +79,7 @@ microprotocols_init(PyObject *dict)
     microprotocols_addbin(&PyString_Type, NULL, _psyco_str2bin);
     microprotocols_addbin(&PyInt_Type, NULL, _psyco_int2bin);
     microprotocols_addbin(&PyLong_Type, NULL, _psyco_int2bin);
-    
+    microprotocols_addbin(&PyUnicode_Type, NULL, _psyco_ustr2bin);
 
     return 0;
 }
@@ -240,7 +247,7 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         if (p2b->pyType == obj->ob_type){
             ri = p2b->convFn(obj, pargs->paramValues+index,
                         pargs->paramLengths+index, &pargs->paramTypes[index],
-                        &pargs->obRefs[index], &pargs->paramFormats[index]);
+                        &pargs->obRefs[index], &pargs->paramFormats[index], conn);
             if (ri < 0)
                 break; /* assuming none of the other out args has been set */
             Dprintf("Adapted [%d] %s by object type: %d ",index, obj->ob_type->tp_name, ri);
@@ -252,7 +259,7 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         if (p2b->checkFn && (p2b->checkFn)(obj)){
             ri = p2b->convFn(obj, &pargs->paramValues[index],
                         &pargs->paramLengths[index], &pargs->paramTypes[index],
-                        &pargs->obRefs[index], &pargs->paramFormats[index]);
+                        &pargs->obRefs[index], &pargs->paramFormats[index], conn);
             if (ri < 0)
                 break; /* assuming none of the other out args has been set */
             Dprintf("Adapted %s by object check ", obj->ob_type->tp_name);
@@ -283,8 +290,10 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
            adapted to the right protocol) */
         
         res = PyObject_CallMethod(tmp, "getraw", NULL);
-        if (res == NULL)
+        if (res == NULL){
+            Dprintf("No %s.getraw() attribute provided", tmp->ob_type->tp_name);
             return -1;
+        }
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         Py_DECREF(tmp);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
@@ -309,7 +318,8 @@ psyco_microprotocols_adapt(cursorObject *self, PyObject *args)
 
 
 int _psyco_str2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obRef, int* fmt ){
+			    Oid* ptype, PyObject **obRef, int* fmt, 
+			    connectionObject *conn){
 	Py_INCREF(obj);
 	Py_ssize_t slen;
 	PyString_AsStringAndSize(obj, data, &slen);
@@ -321,7 +331,8 @@ int _psyco_str2bin(PyObject *obj, char** data, int* len,
 }
 
 int _psyco_int2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obRef, int* fmt ){
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
 	*data = PyMem_Malloc(sizeof(int32_t));
 	*((int32_t *) *data) = htonl(PyInt_AsLong(obj));
 	*ptype = INT4OID;
@@ -331,7 +342,8 @@ int _psyco_int2bin(PyObject *obj, char** data, int* len,
 }
 
 int _psyco_long2bin(PyObject *obj, char** data, int* len, 
-			    Oid* ptype, PyObject **obRef, int* fmt ){
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
 	*data = PyMem_Malloc(sizeof(int64_t));
 	*((int64_t *) *data) = htonl(PyLong_AsLong(obj));
 	*ptype = INT8OID;
@@ -351,6 +363,58 @@ int _psyco_bool2bin(PyObject *obj, char** data, int* len,
 	*len = 1;
 	*fmt = 1;
 	return 1;
+}
+
+/** Try to take encoded data of unicode string
+    This time it's not that easy, since we have to convert to the native
+    encoding of the psycopg connection. But still, we do the minimal 
+    possible byte and buffer usage.
+
+*/
+
+int _psyco_ustr2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
+    
+    PyObject *str;
+    Py_ssize_t slen;
+
+    /* if the wrapped object is an unicode object we can encode it to match
+       self->encoding but if the encoding is not specified we don't know what
+       to do and we raise an exception */
+
+    if (!conn->encoding){
+        PyErr_SetString(PyExc_TypeError,
+			"missing encoding for unicode conversion");
+        return -1;
+    }
+    
+    Dprintf("_psyco_ustr2bin: encoding to %s", conn->encoding);
+
+    PyObject *enc = PyDict_GetItemString(psycoEncodings, conn->encoding);
+    /* note that enc is a borrowed reference */
+
+    if (enc) {
+	const char *s = PyString_AsString(enc);
+	Dprintf("_psyco_ustr2bin: encoding unicode object to %s", s);
+	str = PyUnicode_AsEncodedString(obj, s, NULL);
+	Dprintf("_psyco_ustr2bin: got encoded object at %p", str);
+	if (str == NULL) return -1;
+    }
+    else {
+	/* can't find the right encoder, raise exception */
+	PyErr_Format(InterfaceError,
+			"can't encode unicode string to %s", conn->encoding);
+	return -1;
+    }
+
+    Py_INCREF(str);
+    PyString_AsStringAndSize(str, data, &slen);
+    *len = slen; /* we don't handle more than 3GB here */
+    *ptype = VARCHAROID;
+    *fmt = 1;
+    *obRef = str;
+    return 1;
 }
 
 /*eof*/
