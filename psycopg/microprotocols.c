@@ -75,6 +75,7 @@ microprotocols_init(PyObject *dict)
 
     PyDict_SetItemString(dict, "adapters", psyco_adapters);
     
+    Dprintf("Initializing microprotocol fast addapters");
     psyco_py2bins = PyMem_New(microprotocols_py2bin, 10);
     memset(psyco_py2bins, '\0', sizeof(microprotocols_py2bin) * 10);
     microprotocols_addbin(&PyString_Type, NULL, _psyco_str2bin);

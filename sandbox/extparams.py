@@ -24,6 +24,10 @@ parser.add_option("-N", "--no-stress",
                   action="store_false", dest="stress", default=True,
                   help="Disable the stress test")
 
+parser.add_option("-j", "--just-init",
+                  action="store_true", dest="just_init", default=False,
+                  help="Only load the module")
+
 parser.add_option("-R", "--no-regulars",
                   action="store_false", dest="regulars", default=True,
                   help="Disable the regular tests")
@@ -39,7 +43,12 @@ if os.path.exists(platlib) and not options.old_proto:
     sys.path.insert(0, platlib)
 
 import psycopg2
-from psycopg2._psycopg import AsIs
+
+from psycopg2._psycopg import AsIs, Float
+
+a = Float(0)
+if (options.just_init):
+    sys.exit(0)
 
 dbname = os.environ.get('PSYCOPG2_TESTDB', 'psycopg2_test')
 dbhost = os.environ.get('PSYCOPG2_TESTDB_HOST', None)
@@ -77,10 +86,10 @@ if options.regulars:
         print "Programming error:", e
         pass
     
-    print "Several types:"
-    args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή')
+    args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή', 0.0)
     
-    qry = 'SELECT ' + ', '.join('%s' * len(args)) + ';'
+    qry = 'SELECT ' + ', '.join(['%s'] * len(args)) + ';'
+    print "Several types:", qry
     cr.execute(qry, args)
     print "Result:", cr.fetchall()
     
