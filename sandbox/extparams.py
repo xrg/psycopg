@@ -76,7 +76,7 @@ if options.regulars:
         print "Programming error:", e
         pass
     
-    print "Several types:"
+    args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή', 0.123)
     args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή')
     
     qry = 'SELECT ' + ', '.join('%s' * len(args)) + ';'
