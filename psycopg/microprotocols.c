@@ -298,10 +298,9 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         Py_DECREF(tmp);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
-	if (ri == 1 && (tmp->ob_type == &asisType) &&
-		pargs->paramFormats[index] == 0){
+	if (ri == 1  && pargs->paramFormats[index] == 0){
 	    /* We should let the backend find out the type, because
-	       we cannot tell where the AsIs came from */
+	       we cannot tell where the tmp came from */
 	    pargs->paramTypes[index] = 0;
 	}
     }
