@@ -54,7 +54,8 @@ extern HIDDEN PyObject *psyco_adapters;
     
 
 typedef int (*psyco_py2bin)(PyObject *val, char** data, int* len, 
-			    Oid* ptype, PyObject **obref, int* fmt );
+			    Oid* ptype, PyObject **obref, int* fmt, 
+			    connectionObject *conn );
 
 typedef int (*psyco_checkfn)(PyObject* ob);
 

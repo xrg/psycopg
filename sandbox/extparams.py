@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import os
 
@@ -86,7 +87,6 @@ if options.regulars:
         pass
     
     args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή', 0.123)
-    args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή')
     
     qry = 'SELECT ' + ', '.join('%s' * len(args)) + ';'
     cr.execute(qry, args)
