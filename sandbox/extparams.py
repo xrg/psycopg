@@ -38,6 +38,7 @@ if os.path.exists(platlib) and not options.old_proto:
     sys.path.insert(0, platlib)
 
 import psycopg2
+from psycopg2._psycopg import AsIs
 
 dbname = os.environ.get('PSYCOPG2_TESTDB', 'psycopg2_test')
 dbhost = os.environ.get('PSYCOPG2_TESTDB_HOST', None)
@@ -76,10 +77,15 @@ if options.regulars:
         pass
     
     print "Several types:"
-    cr.execute('SELECT %s,%s,%s,%s, %s::TEXT, %s, %s; ', 
-        (1, 1L, -1, 'str1', None, True, False))
+    args = (1, 1L, -1, 'str1', True, False, u'Δοκιμή')
+    
+    qry = 'SELECT ' + ', '.join('%s' * len(args)) + ';'
+    cr.execute(qry, args)
     print "Result:", cr.fetchall()
     
+    cr.execute('SELECT %s::TEXT, %s::INTEGER, %s::TEXT, %s::INTERVAL ;',
+	    (None, AsIs(1), AsIs('NULL'), AsIs('1 hour')))
+    print "Result 2:", cr.fetchall()
     
 
 if options.stress:
