@@ -64,6 +64,24 @@ asis_str(asisObject *self)
 }
 
 static PyObject *
+asis_getraw(asisObject *self, PyObject *args)
+{
+    char *str;
+    PyObject *ret;
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    if (self->wrapped == Py_None)
+        return Py_None;
+
+    ret = PyObject_Str(self->wrapped);
+    if ((! ret ) || !(str = PyString_AsString(ret)))
+        return NULL;
+    if (strcmp("NULL", str) == 0 || strcmp("null", str) == 0)
+        return Py_None;
+    
+    return ret;
+}
+
+static PyObject *
 asis_conform(asisObject *self, PyObject *args)
 {
     PyObject *res, *proto;
@@ -93,6 +111,8 @@ static struct PyMemberDef asisObject_members[] = {
 static PyMethodDef asisObject_methods[] = {
     {"getquoted", (PyCFunction)asis_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
+    {"getraw", (PyCFunction)asis_getraw, METH_VARARGS,
+     "getraw() -> wrapped object value as plain string or None if NULL"},
     {"__conform__", (PyCFunction)asis_conform, METH_VARARGS, NULL},
     {NULL}  /* Sentinel */
 };
