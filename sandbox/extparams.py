@@ -89,7 +89,11 @@ if options.regulars:
     
 
 if options.stress:
-    ran = range(1, 1500)
+    ran = []
+    for r in range(1, 500):
+	ran.extend([r, 0.4* r, u'αβγ' + str(r)])
+	# ran.extend([r * 0.1, r* 0.15, r* 0.3])
+    print "trying with: ", ran[:5]
     qry = 'SELECT (' + ', '.join([ '%s' for x in ran]) + ');'
     for i in range(1, 1000):
         cr.execute(qry, ran)
