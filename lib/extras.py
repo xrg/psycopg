@@ -358,6 +358,9 @@ try:
         def getraw(self):
             return str(self._uuid)
             
+        def getraw_oid(self):
+            return 2950
+            
         __str__ = getquoted
 
     def register_uuid(oids=None, conn_or_curs=None):
