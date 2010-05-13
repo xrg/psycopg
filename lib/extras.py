@@ -354,6 +354,9 @@ try:
         
         def getquoted(self):
             return "'"+str(self._uuid)+"'::uuid"
+        
+        def getraw(self):
+            return str(self._uuid)
             
         __str__ = getquoted
 
