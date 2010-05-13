@@ -452,6 +452,9 @@ class UUID_adapter(object):
     def getquoted(self):
         return "'"+str(self._uuid)+"'::uuid"
 
+        def getraw(self):
+            return str(self._uuid)
+            
     __str__ = getquoted
 
 def register_uuid(oids=None, conn_or_curs=None):
