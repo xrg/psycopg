@@ -77,7 +77,16 @@ if options.regulars:
     print "Single cmd with semicolon:"
     cr.execute("SELECT %s;   	", (1,))
     print cr.fetchall()
-    
+
+    def testUUIDARRAY():
+	import uuid
+	import psycopg2.extras
+	psycopg2.extras.register_uuid()
+        u = [uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e350'), uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e352')]
+        cr.execute("SELECT %s AS foo", (u,))
+        
+        print cr.fetchall()
+
     try:
         print "Multi cmds:"
         cr.execute("SELECT '%s'; SELECT '2' ;", (1,))
@@ -93,10 +102,14 @@ if options.regulars:
     cr.execute(qry, args)
     print "Result:", cr.fetchall()
     
-    cr.execute('SELECT %s::TEXT, %s::INTEGER, %s::TEXT, %s::INTERVAL ;',
-	    (None, AsIs(1), AsIs('NULL'), AsIs('1 hour')))
-    print "Result 2:", cr.fetchall()
+    #cr.execute('SELECT %s::TEXT, %s::INTEGER, %s::TEXT, %s::INTERVAL ;',
+    #        (None, AsIs(1), AsIs('NULL'), AsIs("'1 hour'")))
+    # print "Result 2:", cr.fetchall()
     
+    cr.execute('SELECT %s', ([ 1, 2, 3, 4 ],))
+    print "Result 3:", cr.fetchall()
+    
+    testUUIDARRAY()
 
 if options.stress:
     ran = []
