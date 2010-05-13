@@ -71,6 +71,10 @@ static int _psyco_buf2bin(PyObject *obj, char** data, int* len,
 			    Oid* ptype, PyObject **obref, int* fmt,
 			    connectionObject *conn);
 
+static int _psyco_list2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obref, int* fmt,
+			    connectionObject *conn);
+
 /* microprotocols_init - initialize the adapters dictionary */
 
 int
@@ -92,6 +96,7 @@ microprotocols_init(PyObject *dict)
     microprotocols_addbin(&PyUnicode_Type, NULL, _psyco_ustr2bin);
     microprotocols_addbin(&PyFloat_Type, NULL, _psyco_float2bin);
     microprotocols_addbin(&PyBuffer_Type, NULL, _psyco_buf2bin);
+    microprotocols_addbin(&PyList_Type, NULL, _psyco_list2bin);
 
     return 0;
 }
@@ -310,6 +315,14 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
                              tmp->ob_type->tp_name);
             return -1;
         }
+        if (res == obj){
+	    /* We have failed to convert obj earlier, so don't recurse ever
+	    again on it! */
+	    PyErr_Format(PyExc_AttributeError, 
+                             "method %s.getraw() returns the object before adapt.",
+                             tmp->ob_type->tp_name);
+	    return -1;
+	}
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
 	if (ri == 1  && pargs->paramFormats[index] == 0){
@@ -318,6 +331,9 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	    res = PyObject_CallMethod(tmp, "getraw_oid", NULL);
 	    if (res == NULL || res == Py_None)
 		pargs->paramTypes[index] = 0;
+	    else if (res == Py_False) {
+		/* don't change the oid */
+	    }
 	    else if (PyInt_Check(res))
 		pargs->paramTypes[index] = (int) PyInt_AsLong(res);
 	}
@@ -477,6 +493,137 @@ int _psyco_buf2bin(PyObject *obj, char** data, int* len,
 	*fmt = 1;
 	*obRef = obj;
 	return 1;
+}
+
+
+/** Serialize a python list to an one-dimensional pg array
+*/
+int _psyco_list2bin(PyObject *obj, char** data, int* len, 
+			    Oid* ptype, PyObject **obRef, int* fmt,
+			    connectionObject *conn){
+    
+	Py_ssize_t alen = 0L, buflen = 0L;
+	unsigned long int i;
+	int has_nulls = 0;
+	struct pq_exec_args ourargs;
+	Oid itemoid = 0;
+	PyObject *ito;
+	int ri;
+	/* First, try with the data */
+	
+	Py_INCREF(obj); /* assume this procedure will take some time */
+	
+	buflen = 16L + sizeof(Oid);
+	
+	_init_pargs(&ourargs);
+	alen = PyList_GET_SIZE(obj);
+	if (alen >= INT_MAX)
+	    return -1;
+	_resize_pargs(&ourargs, alen);
+	
+	Dprintf("Resized to %ld args %d", alen, ourargs.nParams);
+	
+	for(i=0; i< alen; i++){
+	    ito = PyList_GetItem(obj, i);
+	    if (ito == NULL)
+		goto fail;
+	    if ((ri = microprotocol_addparams(ito, conn, &ourargs, i, NULL, NULL)) < 0)
+                goto fail;
+
+	    if (ri != 1){
+		PyErr_Format(PyExc_AttributeError, "Cannot serialize %s element from array",
+			     ito->ob_type->tp_name);
+		goto fail;
+	    }
+
+	    if (itemoid && ourargs.paramTypes[i] && (ourargs.paramTypes[i] != itemoid)){
+		PyErr_Format(PyExc_AttributeError, "Invalid %s element in array",
+			     ito->ob_type->tp_name);
+		goto fail;
+	    }
+	    if (ourargs.paramValues[i] && (ourargs.paramFormats[i] != 1)){
+		PyErr_Format(PyExc_AttributeError, 
+			     "Cannot serialize text for %s in binary array",
+			     ito->ob_type->tp_name);
+		goto fail;
+	    }
+	    if (!itemoid)
+		itemoid = ourargs.paramTypes[i];
+
+	    buflen += ourargs.paramLengths[i] + 4;
+	    ito = NULL;
+	}
+	
+	/* Now, we have buffers for all items, iterate once more and
+	serialize them into one big buffer
+	*/
+	*data = PyMem_Malloc(buflen);
+	uint32_t *buf = (uint32_t*) *data;
+	if (! *data)
+	    goto fail;
+	
+	*(buf++) = htonl(1); /* =ndims */
+	*(buf++) = htonl(has_nulls);
+	Dprintf("sizeof(Oid) = %ld", sizeof(Oid));
+
+	*((Oid*)buf) = htonl(itemoid); // will it work for 
+	buf += sizeof(Oid)/4;
+	*(buf++) = htonl(alen); /* dim[0] */
+	*(buf++) = htonl(0); /* lbound[0] */
+	
+	for (i=0;i<alen; i++){
+	    if (!ourargs.paramValues[i])
+		*(buf++) = htonl(-1);
+	    else{
+		*(buf++) = htonl(ourargs.paramLengths[i]);
+		memcpy(buf,ourargs.paramValues[i],ourargs.paramLengths[i]);
+		buf += ourargs.paramLengths[i] / 4;
+	    }
+		
+	    if (ourargs.obRefs[i]){
+		Py_DECREF(ourargs.obRefs[i]);
+		ourargs.obRefs[i] = NULL;
+	    }else
+		PyMem_Free(ourargs.paramValues[i]);
+	    ourargs.paramValues[i] = NULL;
+	}
+	
+	if (( ((char*)buf) - *data) != buflen){
+	    Dprintf("I smell fish! buflen: %ld offset: %ld", buflen,
+		    (((char*)buf) - *data));
+	}
+	
+	switch(itemoid){
+	    
+	    case TEXTOID: *ptype = TEXTARRAYOID; break;
+	    case INT4OID: *ptype = INT4ARRAYOID; break;
+	    //case INT8OID: *ptype = INT8ARRAYOID; break;
+	    //case BOOLOID: *ptype = BOOL ARRAYOID; break;
+	    case FLOAT4OID: *ptype = FLOAT4ARRAYOID; break;
+	    //case INT4OID: *ptype = INT4ARRAYOID; break;
+	    default:
+		Dprintf("Could not get a solid array type for oid %d", itemoid);
+		*ptype = ANYARRAYOID;
+	}
+	*len = buflen;
+	*fmt = 1;
+	*obRef = NULL;
+	_free_pargs(&ourargs);
+	Py_DECREF(obj);
+	return 1;
+	
+	fail:
+	for (i=0L; i<alen; i++){
+	    if (ourargs.obRefs[i]){
+		Py_DECREF(ourargs.obRefs[i]);
+		ourargs.obRefs[i] = NULL;
+	    }else
+		PyMem_Free(ourargs.paramValues[i]);
+	    ourargs.paramValues[i] = NULL;
+	}
+	_free_pargs(&ourargs);
+	Py_DECREF(obj);
+	return -1;
 }
 
 /*eof*/
