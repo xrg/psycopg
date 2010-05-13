@@ -90,6 +90,20 @@ list_str(listObject *self)
 }
 
 static PyObject *
+list_getraw(listObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    return self->wrapped;
+}
+
+static PyObject *
+list_getraw_oid(listObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    return Py_False;
+}
+
+static PyObject *
 list_getquoted(listObject *self, PyObject *args)
 {
     return list_quote(self);
@@ -145,6 +159,10 @@ static struct PyMemberDef listObject_members[] = {
 static PyMethodDef listObject_methods[] = {
     {"getquoted", (PyCFunction)list_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL date/time"},
+    {"getraw", (PyCFunction)list_getraw, METH_VARARGS,
+     "getraw() -> wrapped object value raw decimal"},
+    {"getraw_oid", (PyCFunction)list_getraw_oid, METH_VARARGS,
+     "getraw_oid() -> wrapped object's oid"},
     {"prepare", (PyCFunction)list_prepare, METH_VARARGS,
      "prepare(conn) -> set encoding to conn->encoding"},
     {"__conform__", (PyCFunction)list_conform, METH_VARARGS, NULL},
