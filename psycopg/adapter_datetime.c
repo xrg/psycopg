@@ -38,6 +38,7 @@
 #include "psycopg/psycopg.h"
 #include "psycopg/adapter_datetime.h"
 #include "psycopg/microprotocols_proto.h"
+#include "pgtypes.h"
 
 
 /* the pointer to the datetime module API is initialized by the module init
@@ -54,13 +55,18 @@ extern HIDDEN PyObject *pyPsycopgTzLOCAL;
 /* datetime_str, datetime_getquoted - return result of quoting */
 
 static PyObject *
-pydatetime_str(pydatetimeObject *self)
+pydatetime_str(pydatetimeObject *self, int quotes)
 {
+    const char *qfmt;
     if (self->type <= PSYCO_DATETIME_TIMESTAMP) {
         PyObject *res = NULL;
         PyObject *iso = PyObject_CallMethod(self->wrapped, "isoformat", NULL);
         if (iso) {
-            res = PyString_FromFormat("'%s'", PyString_AsString(iso));
+            if (quotes)
+                qfmt = "'%s'";
+            else
+                qfmt = "%s";
+            res = PyString_FromFormat(qfmt, PyString_AsString(iso));
             Py_DECREF(iso);
         }
         return res;
@@ -77,8 +83,11 @@ pydatetime_str(pydatetimeObject *self)
             a /= 10;
         }
         buffer[6] = '\0';
-
-        return PyString_FromFormat("'%d days %d.%s seconds'",
+        if (quotes)
+            qfmt = "'%d days %d.%s seconds'";
+        else
+            qfmt = "%d days %d.%s seconds";
+        return PyString_FromFormat(qfmt,
                                    obj->days, obj->seconds, buffer);
     }
 }
@@ -87,7 +96,34 @@ static PyObject *
 pydatetime_getquoted(pydatetimeObject *self, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, "")) return NULL;
-    return pydatetime_str(self);
+    return pydatetime_str(self,1);
+}
+
+static PyObject *
+pydatetime_getraw(pydatetimeObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    return pydatetime_str(self,0);
+}
+
+static PyObject *
+pydatetime_getraw_oid(pydatetimeObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    switch(self->type){
+	case PSYCO_DATETIME_TIME:
+	    return PyInt_FromLong(TIMEOID);
+	    
+	case PSYCO_DATETIME_DATE:
+	    return PyInt_FromLong(DATEOID);
+	    
+	case PSYCO_DATETIME_TIMESTAMP:
+	default:
+	    return PyInt_FromLong(TIMESTAMPOID);
+	    
+	case PSYCO_DATETIME_INTERVAL:
+	    return PyInt_FromLong(INTERVALOID);
+    }
 }
 
 static PyObject *
@@ -121,6 +157,10 @@ static struct PyMemberDef pydatetimeObject_members[] = {
 static PyMethodDef pydatetimeObject_methods[] = {
     {"getquoted", (PyCFunction)pydatetime_getquoted, METH_VARARGS,
      "getquoted() -> wrapped object value as SQL date/time"},
+    {"getraw", (PyCFunction)pydatetime_getraw, METH_VARARGS,
+     "getraw() -> wrapped object value raw date/time"},
+    {"getraw_oid", (PyCFunction)pydatetime_getraw_oid, METH_VARARGS,
+     "getraw_oid() -> wrapped object's oid"},
     {"__conform__", (PyCFunction)pydatetime_conform, METH_VARARGS, NULL},
     {NULL}  /* Sentinel */
 };
