@@ -43,6 +43,7 @@
 
 extern PyObject *pyPsycopgTzFixedOffsetTimezone;
 
+#define HAVE_EXECPARAMS 1
 
 /** DBAPI methods **/
 
@@ -528,7 +529,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
                 if ((ri = microprotocol_addparams(value, conn, pargs, oindex, &nbuf, &nlen)) < 0){
                         Py_XDECREF(value);
                         PyMem_Free(rs_begin);
-                        return -1;
+                        return ri;
                 }else{
                     if ((d-c) > 2)
                         cmdlen -= (d-c) - 1;
@@ -592,7 +593,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
 
             if ((ri = microprotocol_addparams(value, conn, pargs, oindex, &nbuf, &nlen)) < 0){
                 Py_XDECREF(value);
-                return -1;
+                return ri;
             }else{
                 if ((d-c) > 2)
                     cmdlen -= (d-c) - 1;
@@ -699,6 +700,7 @@ _psyco_curs_execute(cursorObject *self,
     PyObject *fquery, *cvt = NULL;
     struct pq_exec_args pargs;
     _init_pargs(&pargs);
+    pargs.nParams = 0;
 
     operation = _psyco_curs_validate_sql_basic(self, operation);
 
@@ -722,19 +724,90 @@ _psyco_curs_execute(cursorObject *self,
 
     if (vars && vars != Py_None)
     {
-        /* if(_mogrify(vars, operation, self->conn, &cvt) == -1) { goto fail; } */
+#ifdef HAVE_EXECPARAMS
         if ((mres = _mogrify_execparams(vars, operation, self->conn, &pargs)) == -1) 
             goto fail;
         else if (mres == -2){ /* retry the old way */
             Dprintf("Fallback to the old pq_execute code");
-            psyco_set_error(ProgrammingError, (PyObject*) self,
-                        "Old path not supported", NULL, NULL);
-            /* TODO */
-            goto fail;
+#ifdef PSYCOPG_DEBUG
+	    if (PyErr_Occurred())
+		PyErr_Print();
+#endif
+            PyErr_Clear();
+#else /* no EXECPARAMS */
+        if (1) {
+#endif
+            if(_mogrify(vars, operation, self->conn, &cvt) == -1) {
+                goto fail;
+            }
         }
+        
     }
 
-    {
+    if (vars && cvt) {
+	/* Doesn't happen if exec params have been prepared */
+        /* if PyString_Format() return NULL an error occured: if the error is
+           a TypeError we need to check the exception.args[0] string for the
+           values:
+
+               "not enough arguments for format string"
+               "not all arguments converted"
+
+           and return the appropriate ProgrammingError. we do that by grabbing
+           the curren exception (we will later restore it if the type or the
+           strings do not match.) */
+
+        if (!(fquery = PyString_Format(operation, cvt))) {
+            PyObject *err, *arg, *trace;
+            int pe = 0;
+
+            PyErr_Fetch(&err, &arg, &trace);
+
+            if (err && PyErr_GivenExceptionMatches(err, PyExc_TypeError)) {
+                Dprintf("psyco_curs_execute: TypeError exception catched");
+                PyErr_NormalizeException(&err, &arg, &trace);
+
+                if (PyObject_HasAttrString(arg, "args")) {
+                    PyObject *args = PyObject_GetAttrString(arg, "args");
+                    PyObject *str = PySequence_GetItem(args, 0);
+                    const char *s = PyString_AS_STRING(str);
+
+                    Dprintf("psyco_curs_execute:     -> %s", s);
+
+                    if (!strcmp(s, "not enough arguments for format string")
+                      || !strcmp(s, "not all arguments converted")) {
+                        Dprintf("psyco_curs_execute:     -> got a match");
+                        psyco_set_error(ProgrammingError, (PyObject*)self,
+                                         s, NULL, NULL);
+                        pe = 1;
+                    }
+
+                    Py_DECREF(args);
+                    Py_DECREF(str);
+                }
+            }
+
+            /* if we did not manage our own exception, restore old one */
+            if (pe == 1) {
+                Py_XDECREF(err); Py_XDECREF(arg); Py_XDECREF(trace);
+            }
+            else {
+                PyErr_Restore(err, arg, trace);
+            }
+            goto fail;
+        }
+
+        if (self->name != NULL) {
+            self->query = PyString_FromFormat(
+                "DECLARE %s CURSOR WITHOUT HOLD FOR %s",
+                self->name, PyString_AS_STRING(fquery));
+            Py_DECREF(fquery);
+        }
+        else {
+            self->query = fquery;
+        }
+    }
+    else {
         if (self->name != NULL) {
             self->query = PyString_FromFormat(
                 "DECLARE %s CURSOR WITHOUT HOLD FOR %s",
@@ -751,7 +824,7 @@ _psyco_curs_execute(cursorObject *self,
 
     /* At this point, the SQL statement must be str, not unicode */
 
-    if (pargs.nParams)
+    if (pargs.nParams && mres >= 0)
         res = pq_execute_params(self, &pargs, async);
     else
         res = pq_execute(self, PyString_AS_STRING(self->query), async);
