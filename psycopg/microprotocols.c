@@ -427,7 +427,7 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
 	    PyErr_Format(PyExc_AttributeError, 
                              "method %s.getraw() returns the object before adapt.",
                              tmp->ob_type->tp_name);
-	    return -1;
+	    return -2;
 	}
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
