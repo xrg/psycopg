@@ -417,13 +417,17 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
             return -1;
         }
         Dprintf("getraw() on argument returned %s", res->ob_type->tp_name);
-        Py_DECREF(tmp);
         ri = microprotocol_addparams(res, conn, pargs, index, nbuf, nlen);
 	if (ri == 1  && pargs->paramFormats[index] == 0){
 	    /* We should let the backend find out the type, because
 	       we cannot tell where the tmp came from */
-	    pargs->paramTypes[index] = 0;
+	    res = PyObject_CallMethod(tmp, "getraw_oid", NULL);
+	    if (res == NULL || res == Py_None)
+		pargs->paramTypes[index] = 0;
+	    else if (PyInt_Check(res))
+		pargs->paramTypes[index] = (int) PyInt_AsLong(res);
 	}
+        Py_DECREF(tmp);
     }
 
     
