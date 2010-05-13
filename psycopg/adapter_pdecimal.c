@@ -35,6 +35,7 @@
 #include "psycopg/psycopg.h"
 #include "psycopg/adapter_pdecimal.h"
 #include "psycopg/microprotocols_proto.h"
+#include "pgtypes.h"
 
 
 /** the Decimal object **/
@@ -67,6 +68,44 @@ pdecimal_str(pdecimalObject *self)
    end:
     Py_DECREF(check);
     return res;
+}
+
+static PyObject *
+pdecimal_getraw(pdecimalObject *self, PyObject* args)
+{
+    PyObject *check, *res = NULL;
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+#if PY_VERSION_HEX < 0x02050000
+    check = PyObject_CallMethod(self->wrapped, "_isnan", NULL);
+    if (PyInt_AsLong(check) == 1) {
+        res = PyString_FromString("NaN");
+        goto end;
+    }
+    Py_DECREF(check);
+    check = PyObject_CallMethod(self->wrapped, "_isinfinity", NULL);
+    if (abs(PyInt_AsLong(check)) == 1) {
+        res = PyString_FromString("NaN");
+        goto end;
+    }
+    res = PyObject_Str(self->wrapped);
+#else
+    check = PyObject_CallMethod(self->wrapped, "is_finite", NULL);
+    if (check == Py_True)
+        res = PyObject_Str(self->wrapped);
+    else
+        res = PyString_FromString("NaN");
+#endif
+
+   end:
+    Py_DECREF(check);
+    return res;
+}
+
+static PyObject *
+pdecimal_getraw_oid(pdecimalObject *self, PyObject *args)
+{
+    if (!PyArg_ParseTuple(args, "")) return NULL;
+    return PyInt_FromLong(NUMERICOID);
 }
 
 static PyObject *
@@ -106,6 +145,10 @@ static struct PyMemberDef pdecimalObject_members[] = {
 static PyMethodDef pdecimalObject_methods[] = {
     {"getquoted", (PyCFunction)pdecimal_getquoted, METH_VARARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
+    {"getraw", (PyCFunction)pdecimal_getraw, METH_VARARGS,
+     "getraw() -> wrapped object value raw decimal"},
+    {"getraw_oid", (PyCFunction)pdecimal_getraw_oid, METH_VARARGS,
+     "getraw_oid() -> wrapped object's oid"},
     {"__conform__", (PyCFunction)pdecimal_conform, METH_VARARGS, NULL},
     {NULL}  /* Sentinel */
 };
