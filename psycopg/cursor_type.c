@@ -468,14 +468,14 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
             c+=2;
         }
         else {
-	    if ( *c == ';'){
-		Dprintf("locate semicolon");
-		is_multi ++;
-	    }
-	    else if (is_multi && ! isspace(*c)){
-		Dprintf("This algo cannot handle multiple queries!");
-		return -2;
-	    }
+            if ( *c == ';'){
+                Dprintf("locate semicolon");
+                is_multi ++;
+            }
+            else if (is_multi && ! isspace(*c)){
+                Dprintf("This algo cannot handle multiple queries!");
+                return -2;
+            }
             c++;
             cmdlen++;
         }

@@ -130,18 +130,18 @@ pydatetime_getraw_oid(pydatetimeObject *self, PyObject *args)
 {
     if (!PyArg_ParseTuple(args, "")) return NULL;
     switch(self->type){
-	case PSYCO_DATETIME_TIME:
-	    return PyInt_FromLong(TIMEOID);
-	    
-	case PSYCO_DATETIME_DATE:
-	    return PyInt_FromLong(DATEOID);
-	    
-	case PSYCO_DATETIME_TIMESTAMP:
-	default:
-	    return PyInt_FromLong(TIMESTAMPOID);
-	    
-	case PSYCO_DATETIME_INTERVAL:
-	    return PyInt_FromLong(INTERVALOID);
+        case PSYCO_DATETIME_TIME:
+            return PyInt_FromLong(TIMEOID);
+            
+        case PSYCO_DATETIME_DATE:
+            return PyInt_FromLong(DATEOID);
+            
+        case PSYCO_DATETIME_TIMESTAMP:
+        default:
+            return PyInt_FromLong(TIMESTAMPOID);
+            
+        case PSYCO_DATETIME_INTERVAL:
+            return PyInt_FromLong(INTERVALOID);
     }
 }
 
