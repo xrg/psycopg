@@ -55,8 +55,8 @@ from distutils.command.build_ext import build_ext
 from distutils.sysconfig import get_python_inc
 from distutils.ccompiler import get_default_compiler
 
-PSYCOPG_VERSION = '2.2.0'
-version_flags   = ['dt', 'dec', 'release-candidate-1']
+PSYCOPG_VERSION = '2.2.1'
+version_flags   = ['dt', 'dec']
 
 PLATFORM_IS_WINDOWS = sys.platform.lower().startswith('win')
 
@@ -189,6 +189,7 @@ class psycopg_build_ext(build_ext):
             if self.have_ssl:
                 self.libraries.append("libeay32")
                 self.libraries.append("ssleay32")
+                self.libraries.append("crypt32")
                 self.libraries.append("user32")
                 self.libraries.append("gdi32")
 
@@ -343,7 +344,7 @@ sources = [
     'adapter_qstring.c', 'adapter_pboolean.c', 'adapter_binary.c',
     'adapter_asis.c', 'adapter_list.c', 'adapter_datetime.c',
     'adapter_pfloat.c', 'adapter_pdecimal.c',
-    'utils.c']
+    'green.c', 'utils.c']
 
 parser = ConfigParser.ConfigParser()
 parser.read('setup.cfg')

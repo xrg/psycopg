@@ -40,15 +40,10 @@ extern "C" {
 #define CONN_STATUS_SETUP 0
 #define CONN_STATUS_READY 1
 #define CONN_STATUS_BEGIN 2
-#define CONN_STATUS_SYNC  3
-#define CONN_STATUS_ASYNC 4
 /* async connection building statuses */
-#define CONN_STATUS_SEND_DATESTYLE             5
-#define CONN_STATUS_SENT_DATESTYLE             6
-#define CONN_STATUS_GET_DATESTYLE              7
-#define CONN_STATUS_SEND_CLIENT_ENCODING       8
-#define CONN_STATUS_SENT_CLIENT_ENCODING       9
-#define CONN_STATUS_GET_CLIENT_ENCODING        10
+#define CONN_STATUS_CONNECTING            20
+#define CONN_STATUS_DATESTYLE             21
+#define CONN_STATUS_CLIENT_ENCODING       22
 
 /* async query execution status */
 #define ASYNC_DONE  0
@@ -59,6 +54,7 @@ extern "C" {
 #define PSYCO_POLL_OK    0
 #define PSYCO_POLL_READ  1
 #define PSYCO_POLL_WRITE 2
+#define PSYCO_POLL_ERROR 3
 
 /* Hard limit on the notices stored by the Python connection */
 #define CONN_NOTICES_LIMIT 50
@@ -131,9 +127,7 @@ HIDDEN int  conn_commit(connectionObject *self);
 HIDDEN int  conn_rollback(connectionObject *self);
 HIDDEN int  conn_switch_isolation_level(connectionObject *self, int level);
 HIDDEN int  conn_set_client_encoding(connectionObject *self, const char *enc);
-HIDDEN PyObject *conn_poll_send(connectionObject *self);
-HIDDEN PyObject *conn_poll_fetch(connectionObject *self);
-HIDDEN PyObject *conn_poll_ready(connectionObject *self);
+HIDDEN int  conn_poll(connectionObject *self);
 
 /* exception-raising macros */
 #define EXC_IF_CONN_CLOSED(self) if ((self)->closed > 0) { \

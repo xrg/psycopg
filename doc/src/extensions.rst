@@ -106,6 +106,14 @@ functionalities defined by the |DBAPI|_.
         Close the object and remove it from the database.
 
 
+.. autofunction:: set_wait_callback(f)
+
+    .. versionadded:: 2.2.0
+
+.. autofunction:: get_wait_callback()
+
+    .. versionadded:: 2.2.0
+
 
 .. _sql-adaptation-objects:
 
@@ -419,29 +427,22 @@ Connection status constants
 These values represent the possible status of a connection: the current value
 can be read from the `~connection.status` attribute.
 
-.. data:: STATUS_SETUP
-
-    Used internally.
+It is possible to find the connection in other status than the one shown below.
+Those are the only states in which a working connection is expected to be found
+during the execution of regular Python client code: other states are for
+internal usage and Python code should not rely on them.
 
 .. data:: STATUS_READY
 
-    Connection established.
+    Connection established. No transaction in progress.
 
 .. data:: STATUS_BEGIN
 
-    Connection established. A transaction is in progress.
+    Connection established. A transaction is currently in progress.
 
 .. data:: STATUS_IN_TRANSACTION
 
     An alias for `STATUS_BEGIN`
-
-.. data:: STATUS_SYNC
-
-    Used internally.
-
-.. data:: STATUS_ASYNC
-
-    Used internally.
 
 
 
@@ -456,7 +457,9 @@ Poll constants
 .. versionadded:: 2.2.0
 
 These values can be returned by `connection.poll()` during asynchronous
-connection and communication. See :ref:`async-support`.
+connection and communication.  They match the values in the libpq enum
+`!PostgresPollingStatusType`.  See :ref:`async-support` and
+:ref:`green-support`.
 
 .. data:: POLL_OK
 
@@ -480,6 +483,12 @@ connection and communication. See :ref:`async-support`.
     For example::
 
         select.select([], [conn.fileno()], [])
+
+.. data:: POLL_ERROR
+
+    There was a problem during connection polling. This value should actually
+    never be returned: in case of poll error usually an exception containing
+    the relevant details is raised.
 
 
 
@@ -528,6 +537,10 @@ from the database.  See :ref:`unicode-handling` for details.
           PYDATETIME
           PYINTERVAL
           PYTIME
+          PYDATEARRAY
+          PYDATETIMEARRAY
+          PYINTERVALARRAY
+          PYTIMEARRAY
 
     Typecasters to convert time-related data types to Python `!datetime`
     objects.
@@ -536,6 +549,10 @@ from the database.  See :ref:`unicode-handling` for details.
           MXDATETIME
           MXINTERVAL
           MXTIME
+          MXDATEARRAY
+          MXDATETIMEARRAY
+          MXINTERVALARRAY
+          MXTIMEARRAY
 
     Typecasters to convert time-related data types to `mx.DateTime`_ objects.
     Only available if Psycopg was compiled with `!mx` support.

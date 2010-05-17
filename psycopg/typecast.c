@@ -182,6 +182,10 @@ typecast_parse_time(const char* s, const char** t, Py_ssize_t* len,
 #include "psycopg/typecast_array.c"
 #include "psycopg/typecast_builtins.c"
 
+#define typecast_PYDATETIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_PYDATEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_PYTIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_PYINTERVALARRAY_cast typecast_GENERIC_ARRAY_cast
 
 /* a list of initializers, used to make the typecasters accessible anyway */
 static typecastObject_initlist typecast_pydatetime[] = {
@@ -189,16 +193,29 @@ static typecastObject_initlist typecast_pydatetime[] = {
     {"PYTIME", typecast_TIME_types, typecast_PYTIME_cast},
     {"PYDATE", typecast_DATE_types, typecast_PYDATE_cast},
     {"PYINTERVAL", typecast_INTERVAL_types, typecast_PYINTERVAL_cast},
+    {"PYDATETIMEARRAY", typecast_DATETIMEARRAY_types, typecast_PYDATETIMEARRAY_cast, "PYDATETIME"},
+    {"PYTIMEARRAY", typecast_TIMEARRAY_types, typecast_PYTIMEARRAY_cast, "PYTIME"},
+    {"PYDATEARRAY", typecast_DATEARRAY_types, typecast_PYDATEARRAY_cast, "PYDATE"},
+    {"PYINTERVALARRAY", typecast_INTERVALARRAY_types, typecast_PYINTERVALARRAY_cast, "PYINTERVAL"},
     {NULL, NULL, NULL}
 };
 
-/* a list of initializers, used to make the typecasters accessible anyway */
 #ifdef HAVE_MXDATETIME
+#define typecast_MXDATETIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_MXDATEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_MXTIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_MXINTERVALARRAY_cast typecast_GENERIC_ARRAY_cast
+
+/* a list of initializers, used to make the typecasters accessible anyway */
 static typecastObject_initlist typecast_mxdatetime[] = {
     {"MXDATETIME", typecast_DATETIME_types, typecast_MXDATE_cast},
     {"MXTIME", typecast_TIME_types, typecast_MXTIME_cast},
     {"MXDATE", typecast_DATE_types, typecast_MXDATE_cast},
     {"MXINTERVAL", typecast_INTERVAL_types, typecast_MXINTERVAL_cast},
+    {"MXDATETIMEARRAY", typecast_DATETIMEARRAY_types, typecast_MXDATETIMEARRAY_cast, "MXDATETIME"},
+    {"MXTIMEARRAY", typecast_TIMEARRAY_types, typecast_MXTIMEARRAY_cast, "MXTIME"},
+    {"MXDATEARRAY", typecast_DATEARRAY_types, typecast_MXDATEARRAY_cast, "MXDATE"},
+    {"MXINTERVALARRAY", typecast_INTERVALARRAY_types, typecast_MXINTERVALARRAY_cast, "MXINTERVAL"},
     {NULL, NULL, NULL}
 };
 #endif
@@ -416,6 +433,15 @@ typecast_call(PyObject *obj, PyObject *args, PyObject *kwargs)
 
     if (!PyArg_ParseTuple(args, "OO", &string, &cursor)) {
         return NULL;
+    }
+
+    // If the string is not a string but a None value we're being called
+    // from a Python-defined caster. There is no need to convert, just
+    // return it.
+
+    if (string == Py_None) {
+        Py_INCREF(string);
+        return string;
     }
 
     return typecast_cast(obj,

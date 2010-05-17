@@ -58,15 +58,34 @@ static PyObject *
 pydatetime_str(pydatetimeObject *self, int quotes)
 {
     const char *qfmt;
+    PyObject *res = NULL;
+    PyObject *iso;
     if (self->type <= PSYCO_DATETIME_TIMESTAMP) {
-        PyObject *res = NULL;
-        PyObject *iso = PyObject_CallMethod(self->wrapped, "isoformat", NULL);
+        PyObject *tz;
+
+        /* Select the right PG type to cast into. */
+        char *fmt = NULL;
+        if (quotes){
+            switch (self->type) {
+            case PSYCO_DATETIME_TIME:
+                fmt = "'%s'::time";
+                break;
+            case PSYCO_DATETIME_DATE:
+                fmt = "'%s'::date";
+                break;
+            case PSYCO_DATETIME_TIMESTAMP:
+                tz = PyObject_GetAttrString(self->wrapped, "tzinfo");
+                if (!tz) { return NULL; }
+                fmt = (tz == Py_None) ? "'%s'::timestamp" : "'%s'::timestamptz";
+                Py_DECREF(tz);
+                break;
+            }
+        }else
+            fmt = "%s";
+
+        iso = PyObject_CallMethod(self->wrapped, "isoformat", NULL);
         if (iso) {
-            if (quotes)
-                qfmt = "'%s'";
-            else
-                qfmt = "%s";
-            res = PyString_FromFormat(qfmt, PyString_AsString(iso));
+            res = PyString_FromFormat(fmt, PyString_AsString(iso));
             Py_DECREF(iso);
         }
         return res;
@@ -84,7 +103,7 @@ pydatetime_str(pydatetimeObject *self, int quotes)
         }
         buffer[6] = '\0';
         if (quotes)
-            qfmt = "'%d days %d.%s seconds'";
+            qfmt = "'%d days %d.%s seconds'::interval";
         else
             qfmt = "%d days %d.%s seconds";
         return PyString_FromFormat(qfmt,
@@ -410,7 +429,7 @@ psyco_DateFromTicks(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "d", &ticks))
         return NULL;
 
-    t = (time_t)round(ticks);
+    t = (time_t)floor(ticks);
     if (localtime_r(&t, &tm)) {
         args = Py_BuildValue("iii", tm.tm_year+1900, tm.tm_mon+1, tm.tm_mday);
         if (args) {
@@ -432,7 +451,7 @@ psyco_TimeFromTicks(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args,"d", &ticks))
         return NULL;
 
-    t = (time_t)round(ticks);
+    t = (time_t)floor(ticks);
     ticks -= (double)t;
     if (localtime_r(&t, &tm)) {
         args = Py_BuildValue("iid", tm.tm_hour, tm.tm_min,
@@ -456,7 +475,7 @@ psyco_TimestampFromTicks(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "d", &ticks))
         return NULL;
 
-    t = (time_t)round(ticks);
+    t = (time_t)floor(ticks);
     ticks -= (double)t;
     if (localtime_r(&t, &tm)) {
         PyObject *value = Py_BuildValue("iiiiidO",

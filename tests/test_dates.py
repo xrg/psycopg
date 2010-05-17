@@ -247,6 +247,58 @@ class DatetimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
         self.assertEqual(seconds, -3583504)
         self.assertEqual(int(round((value - seconds) * 1000000)), 123456)
 
+    def _test_type_roundtrip(self, o1):
+        o2 = self.execute("select %s;", (o1,))
+        self.assertEqual(type(o1), type(o2))
+        return o2
+
+    def _test_type_roundtrip_array(self, o1):
+        o1 = [o1]
+        o2 = self.execute("select %s;", (o1,))
+        self.assertEqual(type(o1[0]), type(o2[0]))
+
+    def test_type_roundtrip_date(self):
+        from datetime import date
+        self._test_type_roundtrip(date(2010,05,03))
+
+    def test_type_roundtrip_datetime(self):
+        from datetime import datetime
+        dt = self._test_type_roundtrip(datetime(2010,05,03,10,20,30))
+        self.assertEqual(None, dt.tzinfo)
+
+    def test_type_roundtrip_datetimetz(self):
+        from datetime import datetime
+        import psycopg2.tz
+        tz = psycopg2.tz.FixedOffsetTimezone(8*60)
+        dt1 = datetime(2010,05,03,10,20,30, tzinfo=tz)
+        dt2 = self._test_type_roundtrip(dt1)
+        self.assertNotEqual(None, dt2.tzinfo)
+        self.assertEqual(dt1, dt2)
+
+    def test_type_roundtrip_time(self):
+        from datetime import time
+        self._test_type_roundtrip(time(10,20,30))
+
+    def test_type_roundtrip_interval(self):
+        from datetime import timedelta
+        self._test_type_roundtrip(timedelta(seconds=30))
+
+    def test_type_roundtrip_date_array(self):
+        from datetime import date
+        self._test_type_roundtrip_array(date(2010,05,03))
+
+    def test_type_roundtrip_datetime_array(self):
+        from datetime import datetime
+        self._test_type_roundtrip_array(datetime(2010,05,03,10,20,30))
+
+    def test_type_roundtrip_time_array(self):
+        from datetime import time
+        self._test_type_roundtrip_array(time(10,20,30))
+
+    def test_type_roundtrip_interval_array(self):
+        from datetime import timedelta
+        self._test_type_roundtrip_array(timedelta(seconds=30))
+
 
 # Only run the datetime tests if psycopg was compiled with support.
 if not hasattr(psycopg2._psycopg, 'PYDATETIME'):
@@ -263,6 +315,15 @@ class mxDateTimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
         self.TIME = psycopg2._psycopg.MXTIME
         self.DATETIME = psycopg2._psycopg.MXDATETIME
         self.INTERVAL = psycopg2._psycopg.MXINTERVAL
+
+        psycopg2.extensions.register_type(self.DATE, self.conn)
+        psycopg2.extensions.register_type(self.TIME, self.conn)
+        psycopg2.extensions.register_type(self.DATETIME, self.conn)
+        psycopg2.extensions.register_type(self.INTERVAL, self.conn)
+        psycopg2.extensions.register_type(psycopg2.extensions.MXDATEARRAY, self.conn)
+        psycopg2.extensions.register_type(psycopg2.extensions.MXTIMEARRAY, self.conn)
+        psycopg2.extensions.register_type(psycopg2.extensions.MXDATETIMEARRAY, self.conn)
+        psycopg2.extensions.register_type(psycopg2.extensions.MXINTERVALARRAY, self.conn)
 
     def tearDown(self):
         self.conn.close()
@@ -370,10 +431,73 @@ class mxDateTimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
         self.assertEqual(seconds, -3583504)
         self.assertEqual(int(round((value - seconds) * 1000000)), 123456)
 
+    def _test_type_roundtrip(self, o1):
+        o2 = self.execute("select %s;", (o1,))
+        self.assertEqual(type(o1), type(o2))
+
+    def _test_type_roundtrip_array(self, o1):
+        o1 = [o1]
+        o2 = self.execute("select %s;", (o1,))
+        self.assertEqual(type(o1[0]), type(o2[0]))
+
+    def test_type_roundtrip_date(self):
+        from mx.DateTime import Date
+        self._test_type_roundtrip(Date(2010,05,03))
+
+    def test_type_roundtrip_datetime(self):
+        from mx.DateTime import DateTime
+        self._test_type_roundtrip(DateTime(2010,05,03,10,20,30))
+
+    def test_type_roundtrip_time(self):
+        from mx.DateTime import Time
+        self._test_type_roundtrip(Time(10,20,30))
+
+    def test_type_roundtrip_interval(self):
+        from mx.DateTime import DateTimeDeltaFrom
+        self._test_type_roundtrip(DateTimeDeltaFrom(seconds=30))
+
+    def test_type_roundtrip_date_array(self):
+        from mx.DateTime import Date
+        self._test_type_roundtrip_array(Date(2010,05,03))
+
+    def test_type_roundtrip_datetime_array(self):
+        from mx.DateTime import DateTime
+        self._test_type_roundtrip_array(DateTime(2010,05,03,10,20,30))
+
+    def test_type_roundtrip_time_array(self):
+        from mx.DateTime import Time
+        self._test_type_roundtrip_array(Time(10,20,30))
+
+    def test_type_roundtrip_interval_array(self):
+        from mx.DateTime import DateTimeDeltaFrom
+        self._test_type_roundtrip_array(DateTimeDeltaFrom(seconds=30))
+
 
 # Only run the mx.DateTime tests if psycopg was compiled with support.
 if not hasattr(psycopg2._psycopg, 'MXDATETIME'):
     del mxDateTimeTests
+
+
+class FromTicksTestCase(unittest.TestCase):
+    # bug "TimestampFromTicks() throws ValueError (2-2.0.14)"
+    # reported by Jozsef Szalay on 2010-05-06
+    def test_timestamp_value_error_sec_59_99(self):
+        from datetime import datetime
+        s = psycopg2.TimestampFromTicks(1273173119.99992)
+        self.assertEqual(s.adapted,
+            datetime(2010, 5, 6, 14, 11, 59, 999920,
+                tzinfo=FixedOffsetTimezone(-5 * 60)))
+
+    def test_date_value_error_sec_59_99(self):
+        from datetime import date
+        s = psycopg2.DateFromTicks(1273173119.99992)
+        self.assertEqual(s.adapted, date(2010, 5, 6))
+
+    def test_time_value_error_sec_59_99(self):
+        from datetime import time
+        s = psycopg2.TimeFromTicks(1273173119.99992)
+        self.assertEqual(s.adapted.replace(hour=0),
+            time(0, 11, 59, 999920))
 
 
 def test_suite():

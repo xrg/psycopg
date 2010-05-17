@@ -2,6 +2,7 @@
 
 import unittest
 import psycopg2
+import psycopg2.extensions
 import tests
 
 class ConnectionTests(unittest.TestCase):
@@ -44,6 +45,24 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual("CREATE TABLE", cur.statusmessage)
         self.assert_(conn.notices)
         conn.close()
+
+    def test_server_version(self):
+        conn = self.connect()
+        self.assert_(conn.server_version)
+
+    def test_protocol_version(self):
+        conn = self.connect()
+        self.assert_(conn.protocol_version in (2,3), conn.protocol_version)
+
+    def test_isolation_level(self):
+        conn = self.connect()
+        self.assertEqual(
+            conn.isolation_level,
+            psycopg2.extensions.ISOLATION_LEVEL_READ_COMMITTED)
+
+    def test_encoding(self):
+        conn = self.connect()
+        self.assert_(conn.encoding in psycopg2.extensions.encodings)
 
 def test_suite():
     return unittest.TestLoader().loadTestsFromName(__name__)

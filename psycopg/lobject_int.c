@@ -58,7 +58,7 @@ lobject_open(lobjectObject *self, connectionObject *conn,
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(self->conn->lock));
 
-    retvalue = pq_begin_locked(self->conn, &pgres, &error);
+    retvalue = pq_begin_locked(self->conn, &pgres, &error, &_save);
     if (retvalue < 0)
         goto end;
 
@@ -174,7 +174,7 @@ lobject_unlink(lobjectObject *self)
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(self->conn->lock));
 
-    retvalue = pq_begin_locked(self->conn, &pgres, &error);
+    retvalue = pq_begin_locked(self->conn, &pgres, &error, &_save);
     if (retvalue < 0)
         goto end;
 
@@ -211,11 +211,9 @@ lobject_write(lobjectObject *self, const char *buf, size_t len)
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(self->conn->lock));
 
-    PQsetnonblocking(self->conn->pgconn, 0);
     written = lo_write(self->conn->pgconn, self->fd, buf, len);
     if (written < 0)
         collect_error(self->conn, &error);
-    PQsetnonblocking(self->conn->pgconn, 1);
 
     pthread_mutex_unlock(&(self->conn->lock));
     Py_END_ALLOW_THREADS;
@@ -316,7 +314,7 @@ lobject_export(lobjectObject *self, const char *filename)
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(self->conn->lock));
 
-    retvalue = pq_begin_locked(self->conn, &pgres, &error);
+    retvalue = pq_begin_locked(self->conn, &pgres, &error, &_save);
     if (retvalue < 0)
         goto end;
 

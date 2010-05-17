@@ -34,6 +34,7 @@
 #include "psycopg/psycopg.h"
 #include "psycopg/cursor.h"
 #include "psycopg/connection.h"
+#include "psycopg/green.h"
 #include "psycopg/pqpath.h"
 #include "psycopg/typecast.h"
 #include "psycopg/microprotocols.h"
@@ -1616,6 +1617,7 @@ psyco_curs_copy_from(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_from);
+    EXC_IF_GREEN(copy_from);
 
     quoted_delimiter = psycopg_escape_string((PyObject*)self->conn, sep, 0, NULL, NULL);
     if (quoted_delimiter == NULL) {
@@ -1721,6 +1723,8 @@ psyco_curs_copy_to(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_to);
+    EXC_IF_GREEN(copy_to);
+
     quoted_delimiter = psycopg_escape_string((PyObject*)self->conn, sep, 0, NULL, NULL);
     if (quoted_delimiter == NULL) {
         PyErr_NoMemory();
@@ -1805,6 +1809,7 @@ psyco_curs_copy_expert(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_expert);
+    EXC_IF_GREEN(copy_expert);
 
     sql = _psyco_curs_validate_sql_basic(self, sql);
     
