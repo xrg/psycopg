@@ -49,6 +49,10 @@ class FixedOffsetTimezone(datetime.tzinfo):
         if name is not None:
             self._name = name
 
+    def __repr__(self):
+        return "psycopg2.tz.FixedOffsetTimezone(offset=%r, name=%r)" \
+            % (self._offset.seconds // 60, self._name)
+
     def utcoffset(self, dt):
         return self._offset
 
@@ -78,7 +82,7 @@ DSTDIFF = DSTOFFSET - STDOFFSET
 class LocalTimezone(datetime.tzinfo):
     """Platform idea of local timezone.
 
-    This is the exact implementation from the Pyhton 2.3 documentation.
+    This is the exact implementation from the Python 2.3 documentation.
     """
     
     def utcoffset(self, dt):

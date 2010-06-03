@@ -228,7 +228,7 @@ manner.
 .. _NOTIFY: http://www.postgresql.org/docs/8.4/static/sql-notify.html
 
 Notification are received after every query execution. If the user is interested
-in receiveing notification but not in performing any query, the
+in receiving notification but not in performing any query, the
 `~connection.poll()` method can be used to check for notification without
 wasting resources.
 
@@ -360,6 +360,83 @@ objects <large-objects>`, :ref:`named cursors <server-side-cursors>`.
 :ref:`COPY commands <copy>` are not supported either in asynchronous mode, but
 this will be probably implemented in a future release.
 
+
+
+
+.. index::
+    single: Greenlet, Coroutine, Eventlet, gevent, Wait callback
+
+.. _green-support:
+
+Support to coroutine libraries
+------------------------------
+
+.. versionadded:: 2.2.0
+
+Psycopg can be used together with coroutine_\-based libraries, and participate
+to cooperative multithreading.
+
+Coroutine-based libraries (such as Eventlet_ or gevent_) can usually patch the
+Python standard library in order to enable a coroutine switch in the presence of
+blocking I/O: the process is usually referred as making the system *green*, in
+reference to the `green threads`_.
+
+Because Psycopg is a C extension module, it is not possible for coroutine
+libraries to patch it: Psycopg instead enables cooperative multithreading by
+allowing the registration of a *wait callback* using the
+`psycopg2.extensions.set_wait_callback()` function. When a wait callback is
+registered, Psycopg will use `libpq non-blocking calls`__ instead of the regular
+blocking ones, and will delegate to the callback the responsibility to wait
+for the socket to become readable or writable.
+
+Working this way, the caller does not have the complete freedom to schedule the
+socket check whenever they want as with an :ref:`asynchronous connection
+<async-support>`, but has the advantage of maintaining a complete |DBAPI|
+semantics: from the point of view of the end user, all Psycopg functions and
+objects will work transparently in the coroutine environment (blocking the
+calling green thread and giving other green threads the possibility to be
+scheduled), allowing non modified code and third party libraries (such as
+SQLAlchemy_) to be used in coroutine-based programs.
+
+Notice that, while I/O correctly yields control to other coroutines, each
+connection has a lock allowing a single cursor at a time to communicate with the
+backend: such lock is not *green*, so blocking against it would block the
+entire program waiting for data, not the single coroutine. Therefore,
+programmers are advised to either avoid sharing connections between coroutines
+or to use a library-friendly lock to synchronize shared connections, e.g. for
+pooling.
+
+Coroutine libraries authors should provide a callback implementation (and
+probably register it) to make Psycopg as green as they want. An example
+callback (using `!select()` to block) is provided as
+`psycopg2.extras.wait_select()`: it boils down to something similar to::
+
+    def wait_select(conn):
+        while 1:
+            state = conn.poll()
+            if state == extensions.POLL_OK:
+                break
+            elif state == extensions.POLL_READ:
+                select.select([conn.fileno()], [], [])
+            elif state == extensions.POLL_WRITE:
+                select.select([], [conn.fileno()], [])
+            else:
+                raise OperationalError("bad state from poll: %s" % state)
+
+.. _coroutine: http://en.wikipedia.org/wiki/Coroutine
+.. _greenlet: http://pypi.python.org/pypi/greenlet
+.. _green threads: http://en.wikipedia.org/wiki/Green_threads
+.. _Eventlet: http://eventlet.net/
+.. _gevent: http://www.gevent.org/
+.. _SQLAlchemy: http://www.sqlalchemy.org/
+.. __: http://www.postgresql.org/docs/8.4/static/libpq-async.html
+
+.. warning::
+    :ref:`COPY commands <copy>` are currently not supported when a wait callback
+    is registered, but they will be probably implemented in a future release.
+
+    :ref:`Large objects <large-objects>` are not supported either: they are
+    not compatible with asynchronous connections.
 
 
 .. testcode::
