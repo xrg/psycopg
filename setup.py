@@ -55,7 +55,7 @@ from distutils.command.build_ext import build_ext
 from distutils.sysconfig import get_python_inc
 from distutils.ccompiler import get_default_compiler
 
-PSYCOPG_VERSION = '2.2.1'
+PSYCOPG_VERSION = '2.2.2'
 version_flags   = ['dt', 'dec']
 
 PLATFORM_IS_WINDOWS = sys.platform.lower().startswith('win')
@@ -114,7 +114,7 @@ class psycopg_build_ext(build_ext):
     def get_compiler(self):
         """Return the name of the C compiler used to compile extensions.
 
-        If a compiler was not explicitely set (on the command line, for
+        If a compiler was not explicitly set (on the command line, for
         example), fall back on the default compiler.
         """
         if self.compiler:
@@ -197,6 +197,12 @@ class psycopg_build_ext(build_ext):
         """Finalize build system configuration on darwin platform."""
         self.libraries.append('ssl')
         self.libraries.append('crypto')
+
+    def finalize_linux2(self):
+        """Finalize build system configuration on GNU/Linux platform."""
+        # tell piro that GCC is fine and dandy, but not so MS compilers
+        for ext in self.extensions:
+            ext.extra_compile_args.append('-Wdeclaration-after-statement')
 
     def finalize_options(self):
         """Complete the build system configuation."""

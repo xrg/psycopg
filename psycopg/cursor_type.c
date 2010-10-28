@@ -534,8 +534,13 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
     Py_XDECREF(iter);
     self->rowcount = rowcount;
 
-    Py_INCREF(Py_None);
-    return Py_None;
+    if (!PyErr_Occurred()) {
+        Py_INCREF(Py_None);
+        return Py_None;
+    }
+    else {
+        return NULL;
+    }
 }
 
 
@@ -1146,6 +1151,11 @@ static int _psyco_curs_copy_columns(PyObject *columns, char *columnlist)
     }
     Py_DECREF(coliter);
 
+    /* Error raised by the coliter generator */
+    if (PyErr_Occurred()) {
+        return -1;
+    }
+
     if (offset == 2) {
         return 0;
     }
@@ -1543,7 +1553,7 @@ static struct PyMemberDef cursorObject_members[] = {
     {"rowcount", T_LONG, OFFSETOF(rowcount), RO,
         "Number of rows read from the backend in the last command."},
     {"arraysize", T_LONG, OFFSETOF(arraysize), 0,
-        "Number of records `fetchmany()` must fetch if not explicitely " \
+        "Number of records `fetchmany()` must fetch if not explicitly " \
         "specified."},
     {"description", T_OBJECT, OFFSETOF(description), RO,
         "Cursor description as defined in DBAPI-2.0."},
