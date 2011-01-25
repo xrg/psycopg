@@ -39,6 +39,8 @@ BUILD_OPT := --build-lib=$(BUILD_DIR)
 BUILD_EXT_OPT := --build-lib=$(BUILD_DIR)
 SDIST_OPT := --formats=gztar
 
+TESTDB ?= psycopg2_test
+
 ifdef PG_CONFIG
 	BUILD_EXT_OPT += --pg-config=$(PG_CONFIG)
 endif
@@ -103,6 +105,7 @@ testdb:
 	# testing environment (as the current is enough for development).
 	psql -f `pg_config --sharedir`/contrib/hstore.sql $(TESTDB)
 
+runtests: testdb check
 
 $(PLATLIB): $(SOURCE_C)
 	$(PYTHON) setup.py build_ext $(BUILD_EXT_OPT)
