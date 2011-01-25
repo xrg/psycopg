@@ -34,14 +34,16 @@
 #include "psycopg/typecast.h"
 #include "psycopg/cursor.h"
 
-/* usefull function used by some typecasters */
+/* useful function used by some typecasters */
 
+#ifdef HAVE_MXDATETIME
 static const char *
 skip_until_space(const char *s)
 {
     while (*s && *s != ' ') s++;
     return s;
 }
+#endif
 
 static const char *
 skip_until_space2(const char *s, Py_ssize_t *len)
@@ -277,6 +279,7 @@ typecast_init(PyObject *dict)
 
     /* register the date/time typecasters with their original names */
 #ifdef HAVE_MXDATETIME
+    if (psyco_typecast_mxdatetime_init()) { return -1; }
     for (i = 0; typecast_mxdatetime[i].name != NULL; i++) {
         typecastObject *t;
         Dprintf("typecast_init: initializing %s", typecast_mxdatetime[i].name);
@@ -285,6 +288,8 @@ typecast_init(PyObject *dict)
         PyDict_SetItem(dict, t->name, (PyObject *)t);
     }
 #endif
+
+    if (psyco_typecast_datetime_init()) { return -1; }
     for (i = 0; typecast_pydatetime[i].name != NULL; i++) {
         typecastObject *t;
         Dprintf("typecast_init: initializing %s", typecast_pydatetime[i].name);

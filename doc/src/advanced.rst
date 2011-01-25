@@ -123,7 +123,7 @@ geometric type:
 
 
 .. |point| replace:: :sql:`point`
-.. _point: http://www.postgresql.org/docs/8.4/static/datatype-geometric.html#AEN6084
+.. _point: http://www.postgresql.org/docs/9.0/static/datatype-geometric.html#DATATYPE-GEOMETRIC
 
 The above function call results in the SQL command::
 
@@ -210,12 +210,13 @@ Asynchronous notifications
 
 Psycopg allows asynchronous interaction with other database sessions using the
 facilities offered by PostgreSQL commands |LISTEN|_ and |NOTIFY|_. Please
-refer to the PostgreSQL documentation for examples of how to use this form of
-communications.
+refer to the PostgreSQL documentation for examples about how to use this form of
+communication.
 
-Notifications received are made available in the `connection.notifies`
-list. Notifications can be sent from Python code simply using a :sql:`NOTIFY`
-command in an `~cursor.execute()` call.
+Notifications are instances of the `~psycopg2.extensions.Notify` object made
+available upon reception in the `connection.notifies` list. Notifications can
+be sent from Python code simply executing a :sql:`NOTIFY` command in an
+`~cursor.execute()` call.
 
 Because of the way sessions interact with notifications (see |NOTIFY|_
 documentation), you should keep the connection in :ref:`autocommit
@@ -223,13 +224,13 @@ documentation), you should keep the connection in :ref:`autocommit
 manner.
 
 .. |LISTEN| replace:: :sql:`LISTEN`
-.. _LISTEN: http://www.postgresql.org/docs/8.4/static/sql-listen.html
+.. _LISTEN: http://www.postgresql.org/docs/9.0/static/sql-listen.html
 .. |NOTIFY| replace:: :sql:`NOTIFY`
-.. _NOTIFY: http://www.postgresql.org/docs/8.4/static/sql-notify.html
+.. _NOTIFY: http://www.postgresql.org/docs/9.0/static/sql-notify.html
 
-Notification are received after every query execution. If the user is interested
-in receiving notification but not in performing any query, the
-`~connection.poll()` method can be used to check for notification without
+Notifications are received after every query execution. If the user is
+interested in receiving notifications but not in performing any query, the
+`~connection.poll()` method can be used to check for new messages without
 wasting resources.
 
 A simple application could poll the connection from time to time to check if
@@ -248,24 +249,33 @@ something to read::
     curs = conn.cursor()
     curs.execute("LISTEN test;")
 
-    print "Waiting for 'NOTIFY test'"
+    print "Waiting for notifications on channel 'test'"
     while 1:
         if select.select([conn],[],[],5) == ([],[],[]):
             print "Timeout"
         else:
             conn.poll()
             while conn.notifies:
-                print "Got NOTIFY:", conn.notifies.pop()
+                notify = conn.notifies.pop()
+                print "Got NOTIFY:", notify.pid, notify.channel, notify.payload
 
-Running the script and executing the command :sql:`NOTIFY test` in a separate
-:program:`psql` shell, the output may look similar to::
+Running the script and executing a command such as :sql:`NOTIFY test, 'hello'`
+in a separate :program:`psql` shell, the output may look similar to::
 
-    Waiting for 'NOTIFY test'
+    Waiting for notifications on channel 'test'
     Timeout
     Timeout
-    Got NOTIFY: (6535, 'test')
+    Got NOTIFY: 6535 test hello
     Timeout
     ...
+
+Notice that the payload is only available from PostgreSQL 9.0: notifications
+received from a previous version server will have the `!payload` attribute set
+to the empty string.
+
+.. versionchanged:: 2.3
+    Added `~psycopg2.extensions.Notify` object and handling notification
+    payload.
 
 
 
@@ -327,12 +337,12 @@ completely non-blocking connection attempt: see the libpq documentation for
 |PQconnectStart|_.
 
 .. |PQconnectStart| replace:: `!PQconnectStart()`
-.. _PQconnectStart: http://www.postgresql.org/docs/8.4/static/libpq-connect.html#AEN33199
+.. _PQconnectStart: http://www.postgresql.org/docs/9.0/static/libpq-connect.html#LIBPQ-PQCONNECTSTART
 
 The same loop should be also used to perform nonblocking queries: after
 sending a query via `~cursor.execute()` or `~cursor.callproc()`, call
 `!poll()` on the connection available from `cursor.connection` until it
-returns `!POLL_OK`, at which pont the query has been completely sent to the
+returns `!POLL_OK`, at which point the query has been completely sent to the
 server and, if it produced data, the results have been transferred to the
 client and available using the regular cursor methods:
 
@@ -364,7 +374,11 @@ this will be probably implemented in a future release.
 
 
 .. index::
-    single: Greenlet, Coroutine, Eventlet, gevent, Wait callback
+    single: Greenlet
+    single: Coroutine
+    single: Eventlet
+    single: gevent
+    single: Wait callback
 
 .. _green-support:
 
@@ -398,17 +412,21 @@ calling green thread and giving other green threads the possibility to be
 scheduled), allowing non modified code and third party libraries (such as
 SQLAlchemy_) to be used in coroutine-based programs.
 
-Notice that, while I/O correctly yields control to other coroutines, each
-connection has a lock allowing a single cursor at a time to communicate with the
-backend: such lock is not *green*, so blocking against it would block the
-entire program waiting for data, not the single coroutine. Therefore,
-programmers are advised to either avoid sharing connections between coroutines
-or to use a library-friendly lock to synchronize shared connections, e.g. for
-pooling.
+.. warning::
+    Psycopg connections are not *green thread safe* and can't be used
+    concurrently by different green threads. Each connection has a lock
+    used to serialize requests from different cursors to the backend process.
+    The lock is held for the duration of the command: if the control switched
+    to a different thread and the latter tried to access the same connection,
+    the result would be a deadlock.
+
+    Therefore, programmers are advised to either avoid sharing connections
+    between coroutines or to use a library-friendly lock to synchronize shared
+    connections, e.g. for pooling.
 
 Coroutine libraries authors should provide a callback implementation (and
-probably register it) to make Psycopg as green as they want. An example
-callback (using `!select()` to block) is provided as
+possibly a method to register it) to make Psycopg as green as they want. An
+example callback (using `!select()` to block) is provided as
 `psycopg2.extras.wait_select()`: it boils down to something similar to::
 
     def wait_select(conn):
@@ -423,13 +441,19 @@ callback (using `!select()` to block) is provided as
             else:
                 raise OperationalError("bad state from poll: %s" % state)
 
+Providing callback functions for the single coroutine libraries is out of
+psycopg2 scope, as the callback can be tied to the libraries' implementation
+details. You can check the `psycogreen`_ project for further informations and
+resources about the topic.
+
 .. _coroutine: http://en.wikipedia.org/wiki/Coroutine
 .. _greenlet: http://pypi.python.org/pypi/greenlet
 .. _green threads: http://en.wikipedia.org/wiki/Green_threads
 .. _Eventlet: http://eventlet.net/
 .. _gevent: http://www.gevent.org/
 .. _SQLAlchemy: http://www.sqlalchemy.org/
-.. __: http://www.postgresql.org/docs/8.4/static/libpq-async.html
+.. _psycogreen: http://bitbucket.org/dvarrazzo/psycogreen/
+.. __: http://www.postgresql.org/docs/9.0/static/libpq-async.html
 
 .. warning::
     :ref:`COPY commands <copy>` are currently not supported when a wait callback

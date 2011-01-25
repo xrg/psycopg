@@ -62,22 +62,74 @@ microprotocols_init(PyObject *dict)
 int
 microprotocols_add(PyTypeObject *type, PyObject *proto, PyObject *cast)
 {
+    PyObject *key;
+
     if (proto == NULL) proto = (PyObject*)&isqlquoteType;
 
     Dprintf("microprotocols_add: cast %p for (%s, ?)", cast, type->tp_name);
 
-    PyDict_SetItem(psyco_adapters,
-                   Py_BuildValue("(OO)", (PyObject*)type, proto),
-                   cast);
+    key = PyTuple_Pack(2, (PyObject*)type, proto);
+    PyDict_SetItem(psyco_adapters, key, cast);
+    Py_DECREF(key);
+
     return 0;
 }
+
+/* Check if one of `obj` superclasses has an adapter for `proto`.
+ *
+ * If it does, return a *borrowed reference* to the adapter, else NULL.
+ */
+static PyObject *
+_get_superclass_adapter(PyObject *obj, PyObject *proto)
+{
+    PyTypeObject *type;
+    PyObject *mro, *st;
+    PyObject *key, *adapter;
+    Py_ssize_t i, ii;
+
+    type = (PyTypeObject *)Py_TYPE(obj);
+    if (!((Py_TPFLAGS_HAVE_CLASS & type->tp_flags) && type->tp_mro)) {
+        /* has no mro */
+        return NULL;
+    }
+
+    /* Walk the mro from the most specific subclass. */
+    mro = type->tp_mro;
+    for (i = 1, ii = PyTuple_GET_SIZE(mro); i < ii; ++i) {
+        st = PyTuple_GET_ITEM(mro, i);
+        key = PyTuple_Pack(2, st, proto);
+        adapter = PyDict_GetItem(psyco_adapters, key);
+        Py_DECREF(key);
+
+        if (adapter) {
+            Dprintf(
+                "microprotocols_adapt: using '%s' adapter to adapt '%s'",
+                ((PyTypeObject *)st)->tp_name, type->tp_name);
+
+            /* register this adapter as good for the subclass too,
+             * so that the next time it will be found in the fast path */
+
+            /* Well, no, maybe this is not a good idea.
+             * It would become a leak in case of dynamic
+             * classes generated in a loop (think namedtuples). */
+
+            /* key = PyTuple_Pack(2, (PyObject*)type, proto);
+             * PyDict_SetItem(psyco_adapters, key, adapter);
+             * Py_DECREF(key);
+             */
+            return adapter;
+        }
+    }
+    return NULL;
+}
+
 
 /* microprotocols_adapt - adapt an object to the built-in protocol */
 
 PyObject *
 microprotocols_adapt(PyObject *obj, PyObject *proto, PyObject *alt)
 {
-    PyObject *adapter, *key;
+    PyObject *adapter, *adapted, *key, *meth;
     char buffer[256];
 
     /* we don't check for exact type conformance as specified in PEP 246
@@ -92,30 +144,56 @@ microprotocols_adapt(PyObject *obj, PyObject *proto, PyObject *alt)
     Dprintf("microprotocols_adapt: trying to adapt %s", obj->ob_type->tp_name);
 
     /* look for an adapter in the registry */
-    key = Py_BuildValue("(OO)", (PyObject*)obj->ob_type, proto);
+    key = PyTuple_Pack(2, Py_TYPE(obj), proto);
     adapter = PyDict_GetItem(psyco_adapters, key);
     Py_DECREF(key);
     if (adapter) {
-        PyObject *adapted = PyObject_CallFunctionObjArgs(adapter, obj, NULL);
+        adapted = PyObject_CallFunctionObjArgs(adapter, obj, NULL);
+        return adapted;
+    }
+
+    /* Check if a superclass can be adapted and use the same adapter. */
+    if (NULL != (adapter = _get_superclass_adapter(obj, proto))) {
+        adapted = PyObject_CallFunctionObjArgs(adapter, obj, NULL);
         return adapted;
     }
 
     /* try to have the protocol adapt this object*/
-    if (PyObject_HasAttrString(proto, "__adapt__")) {
-        PyObject *adapted = PyObject_CallMethod(proto, "__adapt__", "O", obj);
+    if ((meth = PyObject_GetAttrString(proto, "__adapt__"))) {
+        adapted = PyObject_CallFunctionObjArgs(meth, obj, NULL);
+        Py_DECREF(meth);
         if (adapted && adapted != Py_None) return adapted;
         Py_XDECREF(adapted);
-        if (PyErr_Occurred() && !PyErr_ExceptionMatches(PyExc_TypeError))
-            return NULL;
+        if (PyErr_Occurred()) {
+            if (PyErr_ExceptionMatches(PyExc_TypeError)) {
+               PyErr_Clear();
+            } else {
+                return NULL;
+            }
+        }
+    }
+    else {
+        /* proto.__adapt__ not found. */
+        PyErr_Clear();
     }
 
     /* and finally try to have the object adapt itself */
-    if (PyObject_HasAttrString(obj, "__conform__")) {
-        PyObject *adapted = PyObject_CallMethod(obj, "__conform__","O", proto);
+    if ((meth = PyObject_GetAttrString(obj, "__conform__"))) {
+        adapted = PyObject_CallFunctionObjArgs(meth, proto, NULL);
+        Py_DECREF(meth);
         if (adapted && adapted != Py_None) return adapted;
         Py_XDECREF(adapted);
-        if (PyErr_Occurred() && !PyErr_ExceptionMatches(PyExc_TypeError))
-            return NULL;
+        if (PyErr_Occurred()) {
+            if (PyErr_ExceptionMatches(PyExc_TypeError)) {
+               PyErr_Clear();
+            } else {
+                return NULL;
+            }
+        }
+    }
+    else {
+        /* obj.__conform__ not found. */
+        PyErr_Clear();
     }
 
     /* else set the right exception and return NULL */
@@ -130,30 +208,41 @@ PyObject *
 microprotocol_getquoted(PyObject *obj, connectionObject *conn)
 {
     PyObject *res = NULL;
-    PyObject *tmp = microprotocols_adapt(
-        obj, (PyObject*)&isqlquoteType, NULL);
+    PyObject *prepare = NULL;
+    PyObject *adapted;
 
-    if (tmp != NULL) {
-        Dprintf("microprotocol_getquoted: adapted to %s",
-                tmp->ob_type->tp_name);
+    if (!(adapted = microprotocols_adapt(obj, (PyObject*)&isqlquoteType, NULL))) {
+       goto exit;
+    }
 
-        /* if requested prepare the object passing it the connection */
-        if (PyObject_HasAttrString(tmp, "prepare") && conn) {
-            res = PyObject_CallMethod(tmp, "prepare", "O", (PyObject*)conn);
-            if (res == NULL) {
-                Py_DECREF(tmp);
-                return NULL;
-            }
-            else {
+    Dprintf("microprotocol_getquoted: adapted to %s",
+            adapted->ob_type->tp_name);
+
+    /* if requested prepare the object passing it the connection */
+    if (conn) {
+        if ((prepare = PyObject_GetAttrString(adapted, "prepare"))) {
+            res = PyObject_CallFunctionObjArgs(
+                prepare, (PyObject *)conn, NULL);
+            if (res) {
                 Py_DECREF(res);
+                res = NULL;
+            } else {
+                goto exit;
             }
         }
-
-        /* call the getquoted method on tmp (that should exist because we
-           adapted to the right protocol) */
-        res = PyObject_CallMethod(tmp, "getquoted", NULL);
-        Py_DECREF(tmp);
+        else {
+            /* adapted.prepare not found */
+            PyErr_Clear();
+        }
     }
+
+    /* call the getquoted method on adapted (that should exist because we
+       adapted to the right protocol) */
+    res = PyObject_CallMethod(adapted, "getquoted", NULL);
+
+exit:
+    Py_XDECREF(adapted);
+    Py_XDECREF(prepare);
 
     /* we return res with one extra reference, the caller shall free it */
     return res;

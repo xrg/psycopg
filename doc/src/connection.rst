@@ -67,18 +67,188 @@ The ``connection`` class
         `~psycopg2.InterfaceError` will be raised if any operation is
         attempted with the connection.  The same applies to all cursor objects
         trying to use the connection.  Note that closing a connection without
-        committing the changes first will cause an implicit rollback to be
-        performed (unless a different isolation level has been selected: see
+        committing the changes first will cause any pending change to be
+        discarded as if a :sql:`ROLLBACK` was performed (unless a different
+        isolation level has been selected: see
         `~connection.set_isolation_level()`).
+
+        .. index::
+            single: PgBouncer; unclean server
+
+        .. versionchanged:: 2.2
+            previously an explicit :sql:`ROLLBACK` was issued by Psycopg on
+            `!close()`. The command could have been sent to the backend at an
+            inappropriate time, so Psycopg currently relies on the backend to
+            implicitly discard uncommitted changes. Some middleware are known
+            to behave incorrectly though when the connection is closed during
+            a transaction (when `~connection.status` is
+            `~psycopg2.extensions.STATUS_IN_TRANSACTION`), e.g. PgBouncer_
+            reports an ``unclean server`` and discards the connection. To
+            avoid this problem you can ensure to terminate the transaction
+            with a `~connection.commit()`/`~connection.rollback()` before
+            closing.
+
+            .. _PgBouncer: http://pgbouncer.projects.postgresql.org/
 
 
     .. index::
         single: Exceptions; In the connection class
 
-    .. rubric:: Excetptions as connection class attributes
+    .. rubric:: Exceptions as connection class attributes
 
     The `!connection` also exposes as attributes the same exceptions
     available in the `psycopg2` module.  See :ref:`dbapi-exceptions`.
+
+
+
+    .. index::
+        single: Two-phase commit; methods
+
+    .. rubric:: Two-phase commit support methods
+
+    .. versionadded:: 2.3
+
+    .. seealso:: :ref:`tpc` for an introductory explanation of these methods.
+
+    Note that PostgreSQL supports two-phase commit since release 8.1: these
+    methods raise `~psycopg2.NotSupportedError` if used with an older version
+    server.
+
+
+    .. _tpc_methods:
+
+    .. method:: xid(format_id, gtrid, bqual)
+
+        Returns a `~psycopg2.extensions.Xid` instance to be passed to the
+        `!tpc_*()` methods of this connection. The argument types and
+        constraints are explained in :ref:`tpc`.
+
+        The values passed to the method will be available on the returned
+        object as the members `!format_id`, `!gtrid`, `!bqual`. The object
+        also allows accessing to these members and unpacking as a 3-items
+        tuple.
+
+
+    .. method:: tpc_begin(xid)
+
+        Begins a TPC transaction with the given transaction ID *xid*.
+
+        This method should be called outside of a transaction (i.e. nothing
+        may have executed since the last `~connection.commit()` or
+        `~connection.rollback()` and `connection.status` is
+        `~psycopg2.extensions.STATUS_READY`).
+
+        Furthermore, it is an error to call `!commit()` or `!rollback()`
+        within the TPC transaction: in this case a `~psycopg2.ProgrammingError`
+        is raised.
+
+        The *xid* may be either an object returned by the `~connection.xid()`
+        method or a plain string: the latter allows to create a transaction
+        using the provided string as PostgreSQL transaction id. See also
+        `~connection.tpc_recover()`.
+
+
+    .. index::
+        pair: Transaction; Prepare
+
+    .. method:: tpc_prepare()
+
+        Performs the first phase of a transaction started with
+        `~connection.tpc_begin()`.  A `~psycopg2.ProgrammingError` is raised if
+        this method is used outside of a TPC transaction.
+
+        After calling `!tpc_prepare()`, no statements can be executed until
+        `~connection.tpc_commit()` or `~connection.tpc_rollback()` will be
+        called.  The `~connection.reset()` method can be used to restore the
+        status of the connection to `~psycopg2.extensions.STATUS_READY`: the
+        transaction will remain prepared in the database and will be
+        possible to finish it with `!tpc_commit(xid)` and
+        `!tpc_rollback(xid)`.
+
+        .. seealso:: the |PREPARE TRANSACTION|_ PostgreSQL command.
+
+        .. |PREPARE TRANSACTION| replace:: :sql:`PREPARE TRANSACTION`
+        .. _PREPARE TRANSACTION: http://www.postgresql.org/docs/9.0/static/sql-prepare-transaction.html
+
+
+    .. index::
+        pair: Commit; Prepared
+
+    .. method:: tpc_commit([xid])
+
+        When called with no arguments, `!tpc_commit()` commits a TPC
+        transaction previously prepared with `~connection.tpc_prepare()`.
+
+        If `!tpc_commit()` is called prior to `!tpc_prepare()`, a single phase
+        commit is performed.  A transaction manager may choose to do this if
+        only a single resource is participating in the global transaction.
+
+        When called with a transaction ID *xid*, the database commits
+        the given transaction.  If an invalid transaction ID is
+        provided, a `~psycopg2.ProgrammingError` will be raised.  This form
+        should be called outside of a transaction, and is intended for use in
+        recovery.
+
+        On return, the TPC transaction is ended.
+
+        .. seealso:: the |COMMIT PREPARED|_ PostgreSQL command.
+
+        .. |COMMIT PREPARED| replace:: :sql:`COMMIT PREPARED`
+        .. _COMMIT PREPARED: http://www.postgresql.org/docs/9.0/static/sql-commit-prepared.html
+
+
+    .. index::
+        pair: Rollback; Prepared
+
+    .. method:: tpc_rollback([xid])
+
+        When called with no arguments, `!tpc_rollback()` rolls back a TPC
+        transaction.  It may be called before or after
+        `~connection.tpc_prepare()`.
+
+        When called with a transaction ID *xid*, it rolls back the given
+        transaction.  If an invalid transaction ID is provided, a
+        `~psycopg2.ProgrammingError` is raised.  This form should be called
+        outside of a transaction, and is intended for use in recovery.
+
+        On return, the TPC transaction is ended.
+
+        .. seealso:: the |ROLLBACK PREPARED|_ PostgreSQL command.
+
+        .. |ROLLBACK PREPARED| replace:: :sql:`ROLLBACK PREPARED`
+        .. _ROLLBACK PREPARED: http://www.postgresql.org/docs/9.0/static/sql-rollback-prepared.html
+
+
+    .. index::
+        pair: Transaction; Recover
+
+    .. method:: tpc_recover()
+
+        Returns a list of `~psycopg2.extensions.Xid` representing pending
+        transactions, suitable for use with `tpc_commit()` or
+        `tpc_rollback()`.
+
+        If a transaction was not initiated by Psycopg, the returned Xids will
+        have attributes `~psycopg2.extensions.Xid.format_id` and
+        `~psycopg2.extensions.Xid.bqual` set to `None` and the
+        `~psycopg2.extensions.Xid.gtrid` set to the PostgreSQL transaction ID: such Xids are still
+        usable for recovery.  Psycopg uses the same algorithm of the
+        `PostgreSQL JDBC driver`__ to encode a XA triple in a string, so
+        transactions initiated by a program using such driver should be
+        unpacked correctly.
+
+        .. __: http://jdbc.postgresql.org/
+
+        Xids returned by `!tpc_recover()` also have extra attributes 
+        `~psycopg2.extensions.Xid.prepared`, `~psycopg2.extensions.Xid.owner`, 
+        `~psycopg2.extensions.Xid.database` populated with the values read
+        from the server.
+
+        .. seealso:: the |pg_prepared_xacts|_ system view.
+
+        .. |pg_prepared_xacts| replace:: `pg_prepared_xacts`
+        .. _pg_prepared_xacts: http://www.postgresql.org/docs/9.0/static/view-pg-prepared-xacts.html
+
 
 
     .. extension::
@@ -94,19 +264,41 @@ The ``connection`` class
         (0) or closed (1).
 
 
+    .. method:: cancel
+
+        Cancel the current database operation.
+
+        The method interrupts the processing of the current operation. If no
+        query is being executed, it does nothing. You can call this function
+        from a different thread than the one currently executing a database
+        operation, for instance if you want to cancel a long running query if a
+        button is pushed in the UI. Interrupting query execution will cause the
+        cancelled method to raise a
+        `~psycopg2.extensions.QueryCanceledError`. Note that the termination
+        of the query is not guaranteed to succeed: see the documentation for
+        |PQcancel|_.
+
+        .. |PQcancel| replace:: `!PQcancel()`
+        .. _PQcancel: http://www.postgresql.org/docs/8.4/static/libpq-cancel.html#AEN34765
+
+        .. versionadded:: 2.3
+
+
     .. method:: reset
 
         Reset the connection to the default.
 
         The method rolls back an eventual pending transaction and executes the
         PostgreSQL |RESET|_ and |SET SESSION AUTHORIZATION|__ to revert the
-        session to the default values.
+        session to the default values. A two-phase commit transaction prepared
+        using `~connection.tpc_prepare()` will remain in the database
+        available for recover.
 
         .. |RESET| replace:: :sql:`RESET`
-        .. _RESET: http://www.postgresql.org/docs/8.4/static/sql-reset.html
+        .. _RESET: http://www.postgresql.org/docs/9.0/static/sql-reset.html
 
         .. |SET SESSION AUTHORIZATION| replace:: :sql:`SET SESSION AUTHORIZATION`
-        .. __: http://www.postgresql.org/docs/8.4/static/sql-set-session-authorization.html
+        .. __: http://www.postgresql.org/docs/9.0/static/sql-set-session-authorization.html
 
         .. versionadded:: 2.0.12
 
@@ -154,7 +346,7 @@ The ``connection`` class
         is the encoding defined by the database. It should be one of the
         `characters set supported by PostgreSQL`__
 
-        .. __: http://www.postgresql.org/docs/8.4/static/multibyte.html
+        .. __: http://www.postgresql.org/docs/9.0/static/multibyte.html
 
 
     .. index::
@@ -180,19 +372,21 @@ The ``connection`` class
         configuration parameters`__ such as ``log_statement``,
         ``client_min_messages``, ``log_min_duration_statement`` etc.
         
-        .. __: http://www.postgresql.org/docs/8.4/static/runtime-config-logging.html
+        .. __: http://www.postgresql.org/docs/9.0/static/runtime-config-logging.html
 
 
     .. attribute:: notifies
 
-        List containing asynchronous notifications received by the session.
-
-        Received notifications have the form of a 2 items tuple
-        :samp:`({pid},{name})`, where :samp:`{pid}` is the PID of the backend
-        that sent the notification and :samp:`{name}` is the signal name
-        specified in the :sql:`NOTIFY` command.
+        List of `~psycopg2.extensions.Notify` objects containing asynchronous
+        notifications received by the session.
 
         For other details see :ref:`async-notify`.
+
+        .. versionchanged:: 2.3
+            Notifications are instances of the `!Notify` object. Previously the
+            list was composed by 2 items tuples :samp:`({pid},{channel})` and
+            the payload was not accessible. To keep backward compatibility,
+            `!Notify` objects can still be accessed as 2 items tuples.
 
     .. index::
         pair: Backend; PID
@@ -207,7 +401,7 @@ The ``connection`` class
 
         .. seealso:: libpq docs for `PQbackendPID()`__ for details.
 
-            .. __: http://www.postgresql.org/docs/8.4/static/libpq-status.html#AEN33590
+            .. __: http://www.postgresql.org/docs/9.0/static/libpq-status.html#LIBPQ-PQBACKENDPID
 
         .. versionadded:: 2.0.8
 
@@ -228,7 +422,7 @@ The ``connection`` class
 
         .. seealso:: libpq docs for `PQparameterStatus()`__ for details.
 
-            .. __: http://www.postgresql.org/docs/8.4/static/libpq-status.html#AEN33499
+            .. __: http://www.postgresql.org/docs/9.0/static/libpq-status.html#LIBPQ-PQPARAMETERSTATUS
 
         .. versionadded:: 2.0.12
 
@@ -245,7 +439,7 @@ The ``connection`` class
 
         .. seealso:: libpq docs for `PQtransactionStatus()`__ for details.
 
-            .. __: http://www.postgresql.org/docs/8.4/static/libpq-status.html#AEN33480
+            .. __: http://www.postgresql.org/docs/9.0/static/libpq-status.html#LIBPQ-PQTRANSACTIONSTATUS
 
 
     .. index::
@@ -254,11 +448,13 @@ The ``connection`` class
     .. attribute:: protocol_version
 
         A read-only integer representing frontend/backend protocol being used.
-        It can be 2 or 3.
+        Currently Psycopg supports only protocol 3, which allows connection
+        to PostgreSQL server from version 7.4. Psycopg versions previous than
+        2.3 support both protocols 2 and 3.
 
         .. seealso:: libpq docs for `PQprotocolVersion()`__ for details.
 
-            .. __: http://www.postgresql.org/docs/8.4/static/libpq-status.html#AEN33546
+            .. __: http://www.postgresql.org/docs/9.0/static/libpq-status.html#LIBPQ-PQPROTOCOLVERSION
 
         .. versionadded:: 2.0.12
 
@@ -276,7 +472,7 @@ The ``connection`` class
         
         .. seealso:: libpq docs for `PQserverVersion()`__ for details.
 
-            .. __: http://www.postgresql.org/docs/8.4/static/libpq-status.html#AEN33556
+            .. __: http://www.postgresql.org/docs/9.0/static/libpq-status.html#LIBPQ-PQSERVERVERSION
 
         .. versionadded:: 2.0.12
 
@@ -311,7 +507,7 @@ The ``connection`` class
         :rtype: `~psycopg2.extensions.lobject`
 
         .. |lo_import| replace:: `!lo_import()`
-        .. _lo_import: http://www.postgresql.org/docs/8.4/static/lo-interfaces.html#AEN36307
+        .. _lo_import: http://www.postgresql.org/docs/9.0/static/lo-interfaces.html#LO-IMPORT
 
         .. versionadded:: 2.0.8
 
@@ -326,7 +522,7 @@ The ``connection`` class
 
     .. attribute:: async
 
-        Read only attribute: 1 if the connection is asynchronous, 0 otherwse.
+        Read only attribute: 1 if the connection is asynchronous, 0 otherwise.
 
 
     .. method:: poll()

@@ -1,7 +1,8 @@
 #!/usr/bin/env python
 
 import os
-import unittest
+import sys
+from testutils import unittest
 
 dbname = os.environ.get('PSYCOPG2_TESTDB', 'psycopg2_test')
 dbhost = os.environ.get('PSYCOPG2_TESTDB_HOST', None)
@@ -31,6 +32,17 @@ if dbport is not None:
 if dbuser is not None:
     dsn += ' user=%s' % dbuser
 
+# If connection to test db fails, bail out early.
+import psycopg2
+try:
+    cnn = psycopg2.connect(dsn)
+except Exception, e:
+    print "Failed connection to test db:", e.__class__.__name__, e
+    print "Please set env vars 'PSYCOPG2_TESTDB*' to valid values."
+    sys.exit(1)
+else:
+    cnn.close()
+
 import bugX000
 import extras_dictcursor
 import test_dates
@@ -46,6 +58,7 @@ import test_copy
 import test_notify
 import test_async
 import test_green
+import test_cancel
 
 def test_suite():
     suite = unittest.TestSuite()
@@ -59,17 +72,12 @@ def test_suite():
     suite.addTest(test_transaction.test_suite())
     suite.addTest(types_basic.test_suite())
     suite.addTest(types_extras.test_suite())
-
-    if not green:
-        suite.addTest(test_lobject.test_suite())
-        suite.addTest(test_copy.test_suite())
-    else:
-        import warnings
-        warnings.warn("copy/lobjects not implemented in green mode: skipping tests")
-
+    suite.addTest(test_lobject.test_suite())
+    suite.addTest(test_copy.test_suite())
     suite.addTest(test_notify.test_suite())
     suite.addTest(test_async.test_suite())
     suite.addTest(test_green.test_suite())
+    suite.addTest(test_cancel.test_suite())
     return suite
 
 if __name__ == '__main__':
