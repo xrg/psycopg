@@ -16,7 +16,7 @@
 # their work without bothering about the module dependencies.
 
 
-ALLOWED_PSYCOPG_VERSIONS = ('2.2.0','2.2.1','2.2.2')
+ALLOWED_PSYCOPG_VERSIONS = ('2.3.0','2.3.1','2.3.2')
 
 import sys
 import time
@@ -194,7 +194,7 @@ __ac_permissions__ = (
 
 # add icons
 
-misc_={'conn': ImageFile('Shared/DC/ZRDB/www/DBAdapterFolder_icon.gif')}
+misc_={'conn': ImageFile('icons/DBAdapterFolder_icon.gif', globals())}
 
 for icon in ('table', 'view', 'stable', 'what', 'field', 'text', 'bin',
              'int', 'float', 'date', 'time', 'datetime'):

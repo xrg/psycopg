@@ -41,7 +41,6 @@
 
 /** the quoting code */
 
-#ifndef PSYCOPG_OWN_QUOTING
 static unsigned char *
 binary_escape(unsigned char *from, size_t from_length,
                size_t *to_length, PGconn *conn)
@@ -53,82 +52,6 @@ binary_escape(unsigned char *from, size_t from_length,
 #endif
         return PQescapeBytea(from, from_length, to_length);
 }
-#else
-static unsigned char *
-binary_escape(unsigned char *from, size_t from_length,
-               size_t *to_length, PGconn *conn)
-{
-    unsigned char *quoted, *chptr, *newptr;
-    size_t i, space, new_space;
-
-    space = from_length + 2;
-
-    Py_BEGIN_ALLOW_THREADS;
-
-    quoted = (unsigned char*)calloc(space, sizeof(char));
-    if (quoted == NULL) return NULL;
-
-    chptr = quoted;
-
-    for (i = 0; i < from_length; i++) {
-        if (chptr - quoted > space - 6) {
-            new_space  =  space * ((space) / (i + 1)) + 2 + 6;
-            if (new_space - space < 1024) space += 1024;
-            else space = new_space;
-            newptr = (unsigned char *)realloc(quoted, space);
-            if (newptr == NULL) {
-                free(quoted);
-                return NULL;
-            }
-            /* chptr has to be moved to the new location*/
-            chptr = newptr + (chptr - quoted);
-            quoted = newptr;
-            Dprintf("binary_escape: reallocated %i bytes at %p", space,quoted);
-        }
-        if (from[i]) {
-            if (from[i] >= ' ' && from[i] <= '~') {
-                if (from[i] == '\'') {
-                    *chptr = '\'';
-                    chptr++;
-                    *chptr = '\'';
-                    chptr++;
-                }
-                else if (from[i] == '\\') {
-                    memcpy(chptr, "\\\\\\\\", 4);
-                    chptr += 4;
-                }
-                else {
-                    /* leave it as it is if ascii printable */
-                    *chptr = from[i];
-                    chptr++;
-                }
-            }
-            else {
-                unsigned char c;
-
-                /* escape to octal notation \nnn */
-                *chptr++ = '\\';
-                *chptr++ = '\\';
-                c = from[i];
-                *chptr = ((c >> 6) & 0x07) + 0x30; chptr++;
-                *chptr = ((c >> 3) & 0x07) + 0x30; chptr++;
-                *chptr = ( c       & 0x07) + 0x30; chptr++;
-            }
-        }
-        else {
-            /* escape null as \\000 */
-            memcpy(chptr, "\\\\000", 5);
-            chptr += 5;
-        }
-    }
-    *chptr = '\0';
-
-    Py_END_ALLOW_THREADS;
-
-    *to_length = chptr - quoted + 1;
-    return quoted;
-}
-#endif
 
 /* binary_quote - do the quote process on plain and unicode strings */
 
@@ -201,7 +124,6 @@ binary_getraw(binaryObject *self, PyObject* args)
 static PyObject *
 binary_getquoted(binaryObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
     return binary_str(self);
 }
 
@@ -252,7 +174,7 @@ static struct PyMemberDef binaryObject_members[] = {
 /* object method table */
 
 static PyMethodDef binaryObject_methods[] = {
-    {"getquoted", (PyCFunction)binary_getquoted, METH_VARARGS,
+    {"getquoted", (PyCFunction)binary_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted binary string"},
     {"getraw", (PyCFunction)binary_getraw, METH_VARARGS,
      "getraw() -> get buffer.Buffer with raw data."},
@@ -417,5 +339,5 @@ psyco_Binary(PyObject *module, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &str))
         return NULL;
 
-    return PyObject_CallFunction((PyObject *)&binaryType, "O", str);
+    return PyObject_CallFunctionObjArgs((PyObject *)&binaryType, str, NULL);
 }

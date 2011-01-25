@@ -70,7 +70,7 @@ functionalities defined by the |DBAPI|_.
         The method uses the efficient |lo_export|_ libpq function.
         
         .. |lo_export| replace:: `!lo_export()`
-        .. _lo_export: http://www.postgresql.org/docs/8.4/static/lo-interfaces.html#AEN36330
+        .. _lo_export: http://www.postgresql.org/docs/9.0/static/lo-interfaces.html#LO-EXPORT
 
     .. method:: seek(offset, whence=0)
 
@@ -91,7 +91,7 @@ functionalities defined by the |DBAPI|_.
         running these versions. It uses the |lo_truncate|_ libpq function.
 
         .. |lo_truncate| replace:: `!lo_truncate()`
-        .. _lo_truncate: http://www.postgresql.org/docs/8.4/static/lo-interfaces.html#AEN36420
+        .. _lo_truncate: http://www.postgresql.org/docs/9.0/static/lo-interfaces.html#LO-TRUNCATE
 
     .. method:: close()
 
@@ -104,6 +104,20 @@ functionalities defined by the |DBAPI|_.
     .. method:: unlink()
 
         Close the object and remove it from the database.
+
+
+.. autoclass:: Notify(pid, channel, payload='')
+    :members: pid, channel, payload
+
+    .. versionadded:: 2.3
+
+
+.. autoclass:: Xid(format_id, gtrid, bqual)
+    :members: format_id, gtrid, bqual, prepared, owner, database
+
+    .. versionadded:: 2.3
+
+    .. automethod:: from_string(s)
 
 
 .. autofunction:: set_wait_callback(f)
@@ -151,7 +165,7 @@ deal with Python objects adaptation:
 .. class:: ISQLQuote(wrapped_object)
 
     Represents the SQL adaptation protocol.  Objects conforming this protocol
-    should implement a `!getquoted()` method.
+    should implement a `getquoted()` and optionally a `prepare()` method.
 
     Adapters may subclass `!ISQLQuote`, but is not necessary: it is
     enough to expose a `!getquoted()` method to be conforming.
@@ -166,7 +180,21 @@ deal with Python objects adaptation:
         string representing the wrapped object. The `!ISQLQuote`
         implementation does nothing.
 
-.. class:: AsIs
+    .. method:: prepare(conn)
+
+        Prepare the adapter for a connection.  The method is optional: if
+        implemented, it will be invoked before `!getquoted()` with the
+        connection to adapt for as argument.
+
+        A conform object can implement this method if the SQL
+        representation depends on any server parameter, such as the server
+        version or the ``standard_conforming_string`` setting.  Container
+        objects may store the connection and use it to recursively prepare
+        contained objects: see the implementation for
+        ``psycopg2.extensions.SQL_IN`` for a simple example.
+
+
+.. class:: AsIs(object)
 
     Adapter conform to the `ISQLQuote` protocol useful for objects
     whose string representation is already valid as SQL representation.
@@ -178,7 +206,7 @@ deal with Python objects adaptation:
             >>> AsIs(42).getquoted()
             '42'
 
-.. class:: QuotedString
+.. class:: QuotedString(str)
 
     Adapter conform to the `ISQLQuote` protocol for string-like
     objects.
@@ -192,7 +220,7 @@ deal with Python objects adaptation:
             >>> QuotedString(r"O'Reilly").getquoted()
             "'O''Reilly'"
 
-.. class:: Binary
+.. class:: Binary(str)
 
     Adapter conform to the `ISQLQuote` protocol for binary objects.
 
@@ -291,7 +319,7 @@ details.
     Used by Psycopg when adapting or casting unicode strings. See
     :ref:`unicode-handling`.
 
-    .. __: http://www.postgresql.org/docs/8.4/static/multibyte.html
+    .. __: http://www.postgresql.org/docs/9.0/static/multibyte.html
     .. __: http://docs.python.org/library/codecs.html#standard-encodings
 
 
@@ -443,6 +471,15 @@ internal usage and Python code should not rely on them.
 .. data:: STATUS_IN_TRANSACTION
 
     An alias for `STATUS_BEGIN`
+
+.. data:: STATUS_PREPARED
+
+    The connection has been prepared for the second phase in a :ref:`two-phase
+    commit <tpc>` transaction. The connection can't be used to send commands
+    to the database until the transaction is finished with
+    `~connection.tpc_commit()` or `~connection.tpc_rollback()`.
+
+    .. versionadded:: 2.3
 
 
 

@@ -27,6 +27,7 @@ and classes untill a better place in the distribution is found.
 
 import os
 import time
+import codecs
 import warnings
 import re as regex
 
@@ -35,7 +36,7 @@ try:
 except:
     logging = None
 
-from psycopg2 import DATETIME, DataError
+import psycopg2
 from psycopg2 import extensions as _ext
 from psycopg2.extensions import cursor as _cursor
 from psycopg2.extensions import connection as _connection
@@ -143,6 +144,11 @@ class DictRow(list):
             x = self._index[x]
         return list.__getitem__(self, x)
 
+    def __setitem__(self, x, v):
+        if type(x) != int:
+            x = self._index[x]
+        list.__setitem__(self, x, v)
+
     def items(self):
         res = []
         for n, v in self._index.items():
@@ -231,6 +237,80 @@ class RealDictRow(dict):
         if type(name) == int:
             name = self._column_mapping[name]
         return dict.__setitem__(self, name, value)
+
+
+class NamedTupleConnection(_connection):
+    """A connection that uses `NamedTupleCursor` automatically."""
+    def cursor(self, *args, **kwargs):
+        kwargs['cursor_factory'] = NamedTupleCursor
+        return _connection.cursor(self, *args, **kwargs)
+
+class NamedTupleCursor(_cursor):
+    """A cursor that generates results as |namedtuple|__.
+
+    `!fetch*()` methods will return named tuples instead of regular tuples, so
+    their elements can be accessed both as regular numeric items as well as
+    attributes.
+
+        >>> nt_cur = conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor)
+        >>> rec = nt_cur.fetchone()
+        >>> rec
+        Record(id=1, num=100, data="abc'def")
+        >>> rec[1]
+        100
+        >>> rec.data
+        "abc'def"
+
+    .. |namedtuple| replace:: `!namedtuple`
+    .. __: http://docs.python.org/release/2.6/library/collections.html#collections.namedtuple
+    """
+    Record = None
+
+    def execute(self, query, vars=None):
+        self.Record = None
+        return _cursor.execute(self, query, vars)
+
+    def executemany(self, query, vars):
+        self.Record = None
+        return _cursor.executemany(self, vars)
+
+    def callproc(self, procname, vars=None):
+        self.Record = None
+        return _cursor.callproc(self, procname, vars)
+
+    def fetchone(self):
+        t = _cursor.fetchone(self)
+        if t is not None:
+            nt = self.Record
+            if nt is None:
+                nt = self.Record = self._make_nt()
+            return nt(*t)
+
+    def fetchmany(self, size=None):
+        nt = self.Record
+        if nt is None:
+            nt = self.Record = self._make_nt()
+        ts = _cursor.fetchmany(self, size)
+        return [nt(*t) for t in ts]
+
+    def fetchall(self):
+        nt = self.Record
+        if nt is None:
+            nt = self.Record = self._make_nt()
+        ts = _cursor.fetchall(self)
+        return [nt(*t) for t in ts]
+
+    def __iter__(self):
+        return iter(self.fetchall())
+
+    try:
+        from collections import namedtuple
+    except ImportError, _exc:
+        def _make_nt(self):
+            raise self._exc
+    else:
+        def _make_nt(self, namedtuple=namedtuple):
+            return namedtuple("Record", [d[0] for d in self.description or ()])
 
 
 class LoggingConnection(_connection):
@@ -429,6 +509,10 @@ class Inet(object):
             obj.prepare(self._conn)
         return obj.getquoted()+"::inet"
 
+    def __conform__(self, foo):
+        if foo is _ext.ISQLQuote:
+            return self
+
     def __str__(self):
         return str(self.addr)
         
@@ -438,7 +522,6 @@ def register_inet(oid=None, conn_or_curs=None):
     _ext.INET = _ext.new_type((oid, ), "INET",
             lambda data, cursor: data and Inet(data) or None)
     _ext.register_type(_ext.INET, conn_or_curs)
-    _ext.register_adapter(Inet, lambda x: x)
     return _ext.INET
 
 
@@ -474,6 +557,184 @@ def wait_select(conn):
             select.select([], [conn.fileno()], [])
         else:
             raise OperationalError("bad state from poll: %s" % state)
+
+
+class HstoreAdapter(object):
+    """Adapt a Python dict to the hstore syntax."""
+    def __init__(self, wrapped):
+        self.wrapped = wrapped
+
+    def prepare(self, conn):
+        self.conn = conn
+
+        # use an old-style getquoted implementation if required
+        if conn.server_version < 90000:
+            self.getquoted = self._getquoted_8
+
+    def _getquoted_8(self):
+        """Use the operators available in PG pre-9.0."""
+        if not self.wrapped:
+            return "''::hstore"
+
+        adapt = _ext.adapt
+        rv = []
+        for k, v in self.wrapped.iteritems():
+            k = adapt(k)
+            k.prepare(self.conn)
+            k = k.getquoted()
+
+            if v is not None:
+                v = adapt(v)
+                v.prepare(self.conn)
+                v = v.getquoted()
+            else:
+                v = 'NULL'
+
+            rv.append("(%s => %s)" % (k, v))
+
+        return "(" + '||'.join(rv) + ")"
+
+    def _getquoted_9(self):
+        """Use the hstore(text[], text[]) function."""
+        if not self.wrapped:
+            return "''::hstore"
+
+        k = _ext.adapt(self.wrapped.keys())
+        k.prepare(self.conn)
+        v = _ext.adapt(self.wrapped.values())
+        v.prepare(self.conn)
+        return "hstore(%s, %s)" % (k.getquoted(), v.getquoted())
+
+    getquoted = _getquoted_9
+
+    _re_hstore = regex.compile(r"""
+        # hstore key:
+        # a string of normal or escaped chars
+        "((?: [^"\\] | \\. )*)"
+        \s*=>\s* # hstore value
+        (?:
+            NULL # the value can be null - not catched
+            # or a quoted string like the key
+            | "((?: [^"\\] | \\. )*)"
+        )
+        (?:\s*,\s*|$) # pairs separated by comma or end of string.
+    """, regex.VERBOSE)
+
+    # backslash decoder
+    _bsdec = codecs.getdecoder("string_escape")
+
+    def parse(self, s, cur, _decoder=_bsdec):
+        """Parse an hstore representation in a Python string.
+
+        The hstore is represented as something like::
+
+            "a"=>"1", "b"=>"2"
+
+        with backslash-escaped strings.
+        """
+        if s is None:
+            return None
+
+        rv = {}
+        start = 0
+        for m in self._re_hstore.finditer(s):
+            if m is None or m.start() != start:
+                raise psycopg2.InterfaceError(
+                    "error parsing hstore pair at char %d" % start)
+            k = _decoder(m.group(1))[0]
+            v = m.group(2)
+            if v is not None:
+                v = _decoder(v)[0]
+
+            rv[k] = v
+            start = m.end()
+
+        if start < len(s):
+            raise psycopg2.InterfaceError(
+                "error parsing hstore: unparsed data after char %d" % start)
+
+        return rv
+
+    parse = classmethod(parse)
+
+    def parse_unicode(self, s, cur):
+        """Parse an hstore returning unicode keys and values."""
+        codec = codecs.getdecoder(_ext.encodings[cur.connection.encoding])
+        bsdec = self._bsdec
+        decoder = lambda s: codec(bsdec(s)[0])
+        return self.parse(s, cur, _decoder=decoder)
+
+    parse_unicode = classmethod(parse_unicode)
+
+    @classmethod
+    def get_oids(self, conn_or_curs):
+        """Return the oid of the hstore and hstore[] types.
+
+        Return None if hstore is not available.
+        """
+        if hasattr(conn_or_curs, 'execute'):
+            conn = conn_or_curs.connection
+            curs = conn_or_curs
+        else:
+            conn = conn_or_curs
+            curs = conn_or_curs.cursor()
+
+        # Store the transaction status of the connection to revert it after use
+        conn_status = conn.status
+
+        # column typarray not available before PG 8.3
+        typarray = conn.server_version >= 80300 and "typarray" or "NULL"
+
+        # get the oid for the hstore
+        curs.execute("""\
+SELECT t.oid, %s
+FROM pg_type t JOIN pg_namespace ns
+    ON typnamespace = ns.oid
+WHERE typname = 'hstore' and nspname = 'public';
+""" % typarray)
+        oids = curs.fetchone()
+
+        # revert the status of the connection as before the command
+        if (conn_status != _ext.STATUS_IN_TRANSACTION
+        and conn.isolation_level != _ext.ISOLATION_LEVEL_AUTOCOMMIT):
+            conn.rollback()
+
+        return oids
+
+def register_hstore(conn_or_curs, globally=False, unicode=False):
+    """Register adapter and typecaster for `dict`\-\ |hstore| conversions.
+
+    The function must receive a connection or cursor as the |hstore| oid is
+    different in each database. The typecaster will normally be registered
+    only on the connection or cursor passed as argument. If your application
+    uses a single database you can pass *globally*\=True to have the typecaster
+    registered on all the connections.
+
+    By default the returned dicts will have `str` objects as keys and values:
+    use *unicode*\=True to return `unicode` objects instead.  When adapting a
+    dictionary both `str` and `unicode` keys and values are handled (the
+    `unicode` values will be converted according to the current
+    `~connection.encoding`).
+
+    The |hstore| contrib module must be already installed in the database
+    (executing the ``hstore.sql`` script in your ``contrib`` directory).
+    Raise `~psycopg2.ProgrammingError` if the type is not found.
+    """
+    oids = HstoreAdapter.get_oids(conn_or_curs)
+    if oids is None:
+        raise psycopg2.ProgrammingError(
+            "hstore type not found in the database. "
+            "please install it from your 'contrib/hstore.sql' file")
+
+    # create and register the typecaster
+    if unicode:
+        cast = HstoreAdapter.parse_unicode
+    else:
+        cast = HstoreAdapter.parse
+
+    HSTORE = _ext.new_type((oids[0],), "HSTORE", cast)
+    _ext.register_type(HSTORE, not globally and conn_or_curs or None)
+    _ext.register_adapter(dict, HstoreAdapter)
 
 
 __all__ = filter(lambda k: not k.startswith('_'), locals().keys())

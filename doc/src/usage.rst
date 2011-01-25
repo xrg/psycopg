@@ -118,12 +118,13 @@ query:
     >>> cur.execute("INSERT INTO numbers VALUES (%s)", (42,)) # correct
 
 - For positional variables binding, *the second argument must always be a
-  tuple*, even if it contains a single variable.  And remember that Python
+  sequence*, even if it contains a single variable.  And remember that Python
   requires a comma to create a single element tuple::
 
     >>> cur.execute("INSERT INTO foo VALUES (%s)", "bar")    # WRONG
     >>> cur.execute("INSERT INTO foo VALUES (%s)", ("bar"))  # WRONG
     >>> cur.execute("INSERT INTO foo VALUES (%s)", ("bar",)) # correct
+    >>> cur.execute("INSERT INTO foo VALUES (%s)", ["bar"])  # correct
 
 - Only variable values should be bound via this method: it shouldn't be used
   to set table or field names. For these elements, ordinary string formatting
@@ -186,6 +187,7 @@ argument of the `~cursor.execute()` method::
 
 
 .. index::
+    single: Adaptation
     pair: Objects; Adaptation
     single: Data types; Adaptation
 
@@ -206,9 +208,9 @@ In the following examples the method `~cursor.mogrify()` is used to show
 the SQL string that would be sent to the database.
 
 .. index::
-    single: None; Adaptation
+    pair: None; Adaptation
     single: NULL; Adaptation
-    single: Boolean; Adaptation
+    pair: Boolean; Adaptation
 
 - Python ``None`` and boolean values are converted into the proper SQL
   literals::
@@ -217,6 +219,7 @@ the SQL string that would be sent to the database.
     >>> 'SELECT NULL, true, false;'
 
 .. index::
+    single: Adaptation; numbers
     single: Integer; Adaptation
     single: Float; Adaptation
     single: Decimal; Adaptation
@@ -228,7 +231,7 @@ the SQL string that would be sent to the database.
     >>> 'SELECT 10, 10, 10.0, 10.00;'
 
 .. index::
-    single: Strings; Adaptation
+    pair: Strings; Adaptation
     single: Unicode; Adaptation
     single: Buffer; Adaptation
     single: bytea; Adaptation
@@ -241,6 +244,7 @@ the SQL string that would be sent to the database.
   :ref:`unicode-handling`.
 
 .. index::
+    single: Adaptation; Date/Time objects
     single: Date objects; Adaptation
     single: Time objects; Adaptation
     single: Interval objects; Adaptation
@@ -264,7 +268,7 @@ the SQL string that would be sent to the database.
 
 .. index::
     single: Array; Adaptation
-    single: Lists; Adaptation
+    double: Lists; Adaptation
 
 - Python lists are converted into PostgreSQL :sql:`ARRAY`\ s::
 
@@ -272,7 +276,7 @@ the SQL string that would be sent to the database.
     'SELECT ARRAY[10, 20, 30];'
 
 .. index::
-    single: Tuple; Adaptation
+    double: Tuple; Adaptation
     single: IN operator
 
 - Python tuples are converted in a syntax suitable for the SQL :sql:`IN`
@@ -294,6 +298,15 @@ the SQL string that would be sent to the database.
      was necessary to import the `~psycopg2.extensions` module to have it
      registered.
 
+- Python dictionaries are converted into the |hstore|_ data type. See
+  `~psycopg2.extras.register_hstore()` for further details.
+
+  .. |hstore| replace:: :sql:`hstore`
+  .. _hstore: http://www.postgresql.org/docs/9.0/static/hstore.html
+
+  .. versionadded:: 2.3
+     the :sql:`hstore` adaptation.
+
 .. index::
     single: Unicode
 
@@ -313,7 +326,7 @@ defined on the database connection (the `PostgreSQL encoding`__, available in
 
     >>> cur.execute("INSERT INTO test (num, data) VALUES (%s,%s);", (74, u))
 
-.. __: http://www.postgresql.org/docs/8.4/static/multibyte.html
+.. __: http://www.postgresql.org/docs/9.0/static/multibyte.html
 .. __: http://docs.python.org/library/codecs.html#standard-encodings
 
 When reading data from the database, the strings returned are usually 8 bit
@@ -463,21 +476,42 @@ method and to read the data using `~cursor.fetchone()` and
 `~cursor.fetchmany()` methods.
 
 .. |DECLARE| replace:: :sql:`DECLARE`
-.. _DECLARE: http://www.postgresql.org/docs/8.4/static/sql-declare.html
+.. _DECLARE: http://www.postgresql.org/docs/9.0/static/sql-declare.html
 
 
 
-.. index:: Thread safety, Multithread
+.. index:: Thread safety, Multithread, Multiprocess
 
 .. _thread-safety:
 
-Thread safety
--------------
+Thread and process safety
+-------------------------
 
-The Psycopg module is *thread-safe*: threads can access the same database
-using separate sessions (by creating a `connection` per thread) or using
-the same session (accessing to the same connection and creating separate
-`cursor`\ s). In |DBAPI|_ parlance, Psycopg is *level 2 thread safe*.
+The Psycopg module and the `connection` objects are *thread-safe*: many
+threads can access the same database either using separate sessions and
+creating a `!connection` per thread or using the same using the same
+connection and creating separate `cursor`\ s. In |DBAPI|_ parlance, Psycopg is
+*level 2 thread safe*.
+
+The difference between the above two approaches is that, using different
+connections, the commands will be executed in different sessions and will be
+served by different server processes. On the other hand, using many cursors on
+the same connection, all the commands will be executed in the same session
+(and in the same transaction if the connection is not in :ref:`autocommit
+<transactions-control>` mode), but they will be serialized.
+
+The above observations are only valid for regular threads: they don't apply to
+forked processes nor to green threads. `libpq` connections `shouldn't be used by a
+forked processes`__, so when using a module such as |multiprocessing|__ or a
+forking web deploy method such as FastCGI ensure to create the connections
+*after* the fork.
+
+.. __: http://www.postgresql.org/docs/9.0/static/libpq-connect.html#LIBPQ-CONNECT
+.. |multiprocessing| replace:: `!multiprocessing`
+.. __: http://docs.python.org/library/multiprocessing.html
+
+Connections shouldn't be shared either by different green threads: doing so
+may result in a deadlock. See :ref:`green-support` for further details.
 
 
 
@@ -510,7 +544,7 @@ Please refer to the documentation of the single methods for details and
 examples.
 
 .. |COPY| replace:: :sql:`COPY`
-.. __: http://www.postgresql.org/docs/8.4/static/sql-copy.html
+.. __: http://www.postgresql.org/docs/9.0/static/sql-copy.html
 
 
 
@@ -527,7 +561,7 @@ access to user data that is stored in a special large-object structure. They
 are useful with data values too large to be manipulated conveniently as a
 whole.
 
-.. __: http://www.postgresql.org/docs/8.4/static/largeobjects.html
+.. __: http://www.postgresql.org/docs/9.0/static/largeobjects.html
 
 Psycopg allows access to the large object using the
 `~psycopg2.extensions.lobject` class. Objects are generated using the
@@ -537,6 +571,58 @@ Psycopg large object support efficient import/export with file system files
 using the |lo_import|_ and |lo_export|_ libpq functions.
 
 .. |lo_import| replace:: `!lo_import()`
-.. _lo_import: http://www.postgresql.org/docs/8.4/static/lo-interfaces.html#AEN36307
+.. _lo_import: http://www.postgresql.org/docs/9.0/static/lo-interfaces.html#LO-IMPORT
 .. |lo_export| replace:: `!lo_export()`
-.. _lo_export: http://www.postgresql.org/docs/8.4/static/lo-interfaces.html#AEN36330
+.. _lo_export: http://www.postgresql.org/docs/9.0/static/lo-interfaces.html#LO-EXPORT
+
+
+
+.. index::
+    pair: Two-phase commit; Transaction
+
+.. _tpc:
+
+Two-Phase Commit protocol support
+---------------------------------
+
+.. versionadded:: 2.3
+
+Psycopg exposes the two-phase commit features available since PostgreSQL 8.1
+implementing the *two-phase commit extensions* proposed by the |DBAPI|.
+
+The |DBAPI| model of two-phase commit is inspired to the `XA specification`__,
+according to which transaction IDs are formed from three components:
+
+- a format ID (non-negative 32 bit integer)
+- a global transaction ID (string not longer than 64 bytes)
+- a branch qualifier (string not longer than 64 bytes)
+
+For a particular global transaction, the first two components will be the same
+for all the resources. Every resource will be assigned a different branch
+qualifier.
+
+According to the |DBAPI| specification, a transaction ID is created using the
+`connection.xid()` method. Once you have a transaction id, a distributed
+transaction can be started with `connection.tpc_begin()`, prepared using
+`~connection.tpc_prepare()` and completed using `~connection.tpc_commit()` or
+`~connection.tpc_rollback()`.  Transaction IDs can also be retrieved from the
+database using `~connection.tpc_recover()` and completed using the above
+`!tpc_commit()` and `!tpc_rollback()`.
+
+PostgreSQL doesn't follow the XA standard though, and the ID for a PostgreSQL
+prepared transaction can be any string up to 200 characters long.
+Psycopg's `~psycopg2.extensions.Xid` objects can represent both XA-style
+transactions IDs (such as the ones created by the `!xid()` method) and
+PostgreSQL transaction IDs identified by an unparsed string.
+
+The format in which the Xids are converted into strings passed to the
+database is the same employed by the `PostgreSQL JDBC driver`__: this should
+allow interoperation between tools written in Python and in Java. For example
+a recovery tool written in Python would be able to recognize the components of
+transactions produced by a Java program.
+
+For further details see the documentation for the above methods.
+
+.. __: http://www.opengroup.org/bookstore/catalog/c193.htm
+.. __: http://jdbc.postgresql.org/
+

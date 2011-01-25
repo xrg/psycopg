@@ -52,7 +52,6 @@ asis_str(asisObject *self)
 static PyObject *
 asis_getquoted(asisObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
     return asis_str(self);
 }
 
@@ -102,7 +101,7 @@ static struct PyMemberDef asisObject_members[] = {
 /* object method table */
 
 static PyMethodDef asisObject_methods[] = {
-    {"getquoted", (PyCFunction)asis_getquoted, METH_VARARGS,
+    {"getquoted", (PyCFunction)asis_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
     {"getraw", (PyCFunction)asis_getraw, METH_VARARGS,
      "getraw() -> wrapped object value as plain string or None if NULL"},
@@ -261,5 +260,5 @@ psyco_AsIs(PyObject *module, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &obj))
         return NULL;
 
-    return PyObject_CallFunction((PyObject *)&asisType, "O", obj);
+    return PyObject_CallFunctionObjArgs((PyObject *)&asisType, obj, NULL);
 }

@@ -41,6 +41,8 @@
   #define PY_FORMAT_SIZE_T ""
   #define PyInt_FromSsize_t(x) PyInt_FromLong((x))
 
+  #define lenfunc inquiry
+  #define ssizeargfunc intargfunc
   #define readbufferproc getreadbufferproc
   #define writebufferproc getwritebufferproc
   #define segcountproc getsegcountproc
@@ -49,6 +51,10 @@
   #define CONV_CODE_PY_SSIZE_T "i"
 #else
   #define CONV_CODE_PY_SSIZE_T "n"
+#endif
+
+#ifndef Py_TYPE
+  #define Py_TYPE(o) (((PyObject*)(o))->ob_type)
 #endif
 
 /* FORMAT_CODE_PY_SSIZE_T is for Py_ssize_t: */

@@ -54,7 +54,6 @@ pfloat_str(pfloatObject *self)
 static PyObject *
 pfloat_getquoted(pfloatObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
     return pfloat_str(self);
 }
 
@@ -86,7 +85,7 @@ static struct PyMemberDef pfloatObject_members[] = {
 /* object method table */
 
 static PyMethodDef pfloatObject_methods[] = {
-    {"getquoted", (PyCFunction)pfloat_getquoted, METH_VARARGS,
+    {"getquoted", (PyCFunction)pfloat_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
     {"getraw", (PyCFunction)pfloat_getquoted, METH_VARARGS,
      "getraw() -> wrapped object value as raw string, identical to getquoted()"},
@@ -248,5 +247,5 @@ psyco_Float(PyObject *module, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &obj))
         return NULL;
 
-    return PyObject_CallFunction((PyObject *)&pfloatType, "O", obj);
+    return PyObject_CallFunctionObjArgs((PyObject *)&pfloatType, obj, NULL);
 }

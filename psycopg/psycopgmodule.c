@@ -34,6 +34,8 @@
 #include "psycopg/cursor.h"
 #include "psycopg/green.h"
 #include "psycopg/lobject.h"
+#include "psycopg/notify.h"
+#include "psycopg/xid.h"
 #include "psycopg/typecast.h"
 #include "psycopg/microprotocols.h"
 #include "psycopg/microprotocols_proto.h"
@@ -50,17 +52,12 @@
 #ifdef HAVE_MXDATETIME
 #include <mxDateTime.h>
 #include "psycopg/adapter_mxdatetime.h"
-HIDDEN mxDateTimeModule_APIObject *mxDateTimeP = NULL;
 #endif
 
 /* some module-level variables, like the datetime module */
 #include <datetime.h>
 #include "psycopg/adapter_datetime.h"
 HIDDEN PyObject *pyDateTimeModuleP = NULL;
-HIDDEN PyObject *pyDateTypeP = NULL;
-HIDDEN PyObject *pyTimeTypeP = NULL;
-HIDDEN PyObject *pyDateTimeTypeP = NULL;
-HIDDEN PyObject *pyDeltaTypeP = NULL;
 
 /* pointers to the psycopg.tz classes */
 HIDDEN PyObject *pyPsycopgTzModule = NULL;
@@ -310,20 +307,20 @@ psyco_adapters_init(PyObject *mod)
     /* the module has already been initialized, so we can obtain the callable
        objects directly from its dictionary :) */
     call = PyMapping_GetItemString(mod, "DateFromPy");
-    microprotocols_add((PyTypeObject*)pyDateTypeP, NULL, call);
+    microprotocols_add(PyDateTimeAPI->DateType, NULL, call);
     call = PyMapping_GetItemString(mod, "TimeFromPy");
-    microprotocols_add((PyTypeObject*)pyTimeTypeP, NULL, call);
+    microprotocols_add(PyDateTimeAPI->TimeType, NULL, call);
     call = PyMapping_GetItemString(mod, "TimestampFromPy");
-    microprotocols_add((PyTypeObject*)pyDateTimeTypeP, NULL, call);
+    microprotocols_add(PyDateTimeAPI->DateTimeType, NULL, call);
     call = PyMapping_GetItemString(mod, "IntervalFromPy");
-    microprotocols_add((PyTypeObject*)pyDeltaTypeP, NULL, call);
+    microprotocols_add(PyDateTimeAPI->DeltaType, NULL, call);
 
 #ifdef HAVE_MXDATETIME
     /* as above, we use the callable objects from the psycopg module */
     call = PyMapping_GetItemString(mod, "TimestampFromMx");
-    microprotocols_add(mxDateTimeP->DateTime_Type, NULL, call);
+    microprotocols_add(mxDateTime.DateTime_Type, NULL, call);
     call = PyMapping_GetItemString(mod, "TimeFromMx");
-    microprotocols_add(mxDateTimeP->DateTimeDelta_Type, NULL, call);
+    microprotocols_add(mxDateTime.DateTimeDelta_Type, NULL, call);
 #endif
 }
 
@@ -732,6 +729,8 @@ init_psycopg(void)
     asisType.ob_type       = &PyType_Type;
     listType.ob_type       = &PyType_Type;
     chunkType.ob_type      = &PyType_Type;
+    NotifyType.ob_type     = &PyType_Type;
+    XidType.ob_type        = &PyType_Type;
 
     if (PyType_Ready(&connectionType) == -1) return;
     if (PyType_Ready(&cursorType) == -1) return;
@@ -745,6 +744,8 @@ init_psycopg(void)
     if (PyType_Ready(&asisType) == -1) return;
     if (PyType_Ready(&listType) == -1) return;
     if (PyType_Ready(&chunkType) == -1) return;
+    if (PyType_Ready(&NotifyType) == -1) return;
+    if (PyType_Ready(&XidType) == -1) return;
 
 #ifdef PSYCOPG_EXTENSIONS
     lobjectType.ob_type    = &PyType_Type;
@@ -760,7 +761,7 @@ init_psycopg(void)
         PyErr_SetString(PyExc_ImportError, "can't import mx.DateTime module");
         return;
     }
-    mxDateTimeP = &mxDateTime;
+    if (psyco_adapter_mxdatetime_init()) { return; }
 #endif
 
     /* import python builtin datetime module, if available */
@@ -770,15 +771,13 @@ init_psycopg(void)
         PyErr_SetString(PyExc_ImportError, "can't import datetime module");
         return;
     }
+
+    /* Initialize the PyDateTimeAPI everywhere is used */
+    PyDateTime_IMPORT;
+    if (psyco_adapter_datetime_init()) { return; }
+
     pydatetimeType.ob_type = &PyType_Type;
     if (PyType_Ready(&pydatetimeType) == -1) return;
-
-    /* now we define the datetime types, this is crazy because python should
-       be doing that, not us! */
-    pyDateTypeP = PyObject_GetAttrString(pyDateTimeModuleP, "date");
-    pyTimeTypeP = PyObject_GetAttrString(pyDateTimeModuleP, "time");
-    pyDateTimeTypeP = PyObject_GetAttrString(pyDateTimeModuleP, "datetime");
-    pyDeltaTypeP = PyObject_GetAttrString(pyDateTimeModuleP, "timedelta");
 
     /* import psycopg2.tz anyway (TODO: replace with C-level module?) */
     pyPsycopgTzModule = PyImport_ImportModule("psycopg2.tz");
@@ -819,6 +818,8 @@ init_psycopg(void)
     PyModule_AddObject(module, "connection", (PyObject*)&connectionType);
     PyModule_AddObject(module, "cursor", (PyObject*)&cursorType);
     PyModule_AddObject(module, "ISQLQuote", (PyObject*)&isqlquoteType);
+    PyModule_AddObject(module, "Notify", (PyObject*)&NotifyType);
+    PyModule_AddObject(module, "Xid", (PyObject*)&XidType);
 #ifdef PSYCOPG_EXTENSIONS
     PyModule_AddObject(module, "lobject", (PyObject*)&lobjectType);
 #endif
@@ -850,6 +851,8 @@ init_psycopg(void)
     listType.tp_alloc = PyType_GenericAlloc;
     chunkType.tp_alloc = PyType_GenericAlloc;
     pydatetimeType.tp_alloc = PyType_GenericAlloc;
+    NotifyType.tp_alloc = PyType_GenericAlloc;
+    XidType.tp_alloc = PyType_GenericAlloc;
 
 #ifdef PSYCOPG_EXTENSIONS
     lobjectType.tp_alloc = PyType_GenericAlloc;

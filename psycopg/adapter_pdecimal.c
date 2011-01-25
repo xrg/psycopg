@@ -44,29 +44,41 @@ static PyObject *
 pdecimal_str(pdecimalObject *self)
 {
     PyObject *check, *res = NULL;
-#if PY_VERSION_HEX < 0x02050000
-    check = PyObject_CallMethod(self->wrapped, "_isnan", NULL);
-    if (PyInt_AsLong(check) == 1) {
-        res = PyString_FromString("'NaN'::numeric");
-        goto end;
-    }
-    Py_DECREF(check);
-    check = PyObject_CallMethod(self->wrapped, "_isinfinity", NULL);
-    if (abs(PyInt_AsLong(check)) == 1) {
-        res = PyString_FromString("'NaN'::numeric");
-        goto end;
-    }
-    res = PyObject_Str(self->wrapped);
-#else
     check = PyObject_CallMethod(self->wrapped, "is_finite", NULL);
-    if (check == Py_True)
+    if (check == Py_True) {
         res = PyObject_Str(self->wrapped);
-    else
+        goto end;
+    }
+    else if (check) {
         res = PyString_FromString("'NaN'::numeric");
-#endif
+        goto end;
+    }
 
-   end:
+    /* is_finite() was introduced 2.5.1 < somewhere <= 2.5.4.
+     * We assume we are here because we didn't find the method. */
+    PyErr_Clear();
+
+    if (!(check = PyObject_CallMethod(self->wrapped, "_isnan", NULL))) {
+        goto end;
+    }
+    if (PyObject_IsTrue(check)) {
+        res = PyString_FromString("'NaN'::numeric");
+        goto end;
+    }
+
     Py_DECREF(check);
+    if (!(check = PyObject_CallMethod(self->wrapped, "_isinfinity", NULL))) {
+        goto end;
+    }
+    if (PyObject_IsTrue(check)) {
+        res = PyString_FromString("'NaN'::numeric");
+        goto end;
+    }
+
+    res = PyObject_Str(self->wrapped);
+
+end:
+    Py_XDECREF(check);
     return res;
 }
 
@@ -111,7 +123,6 @@ pdecimal_getraw_oid(pdecimalObject *self, PyObject *args)
 static PyObject *
 pdecimal_getquoted(pdecimalObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
     return pdecimal_str(self);
 }
 
@@ -143,7 +154,7 @@ static struct PyMemberDef pdecimalObject_members[] = {
 /* object method table */
 
 static PyMethodDef pdecimalObject_methods[] = {
-    {"getquoted", (PyCFunction)pdecimal_getquoted, METH_VARARGS,
+    {"getquoted", (PyCFunction)pdecimal_getquoted, METH_NOARGS,
      "getquoted() -> wrapped object value as SQL-quoted string"},
     {"getraw", (PyCFunction)pdecimal_getraw, METH_VARARGS,
      "getraw() -> wrapped object value raw decimal"},
@@ -223,7 +234,7 @@ pdecimal_del(PyObject* self)
 static PyObject *
 pdecimal_repr(pdecimalObject *self)
 {
-    return PyString_FromFormat("<psycopg2._psycopg.Float object at %p>",
+    return PyString_FromFormat("<psycopg2._psycopg.Decimal object at %p>",
                                 self);
 }
 
@@ -307,5 +318,5 @@ psyco_Decimal(PyObject *module, PyObject *args)
     if (!PyArg_ParseTuple(args, "O", &obj))
         return NULL;
 
-    return PyObject_CallFunction((PyObject *)&pdecimalType, "O", obj);
+    return PyObject_CallFunctionObjArgs((PyObject *)&pdecimalType, obj, NULL);
 }

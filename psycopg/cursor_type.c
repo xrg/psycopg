@@ -56,8 +56,6 @@ extern PyObject *pyPsycopgTzFixedOffsetTimezone;
 static PyObject *
 psyco_curs_close(cursorObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
-
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_ASYNC_IN_PROGRESS(self, close);
 
@@ -690,6 +688,72 @@ static PyObject *_psyco_curs_validate_sql_basic(
         return NULL;
 }
 
+/* Merge together a query string and its arguments.
+ *
+ * The arguments have been already adapted to SQL.
+ *
+ * Return a new reference to a string with the merged query,
+ * NULL and set an exception if any happened.
+ */
+static PyObject *
+_psyco_curs_merge_query_args(cursorObject *self,
+                             PyObject *query, PyObject *args)
+{
+    PyObject *fquery;
+
+    /* if PyString_Format() return NULL an error occured: if the error is
+       a TypeError we need to check the exception.args[0] string for the
+       values:
+
+           "not enough arguments for format string"
+           "not all arguments converted"
+
+       and return the appropriate ProgrammingError. we do that by grabbing
+       the curren exception (we will later restore it if the type or the
+       strings do not match.) */
+
+    if (!(fquery = PyString_Format(query, args))) {
+        PyObject *err, *arg, *trace;
+        int pe = 0;
+
+        PyErr_Fetch(&err, &arg, &trace);
+
+        if (err && PyErr_GivenExceptionMatches(err, PyExc_TypeError)) {
+            Dprintf("psyco_curs_execute: TypeError exception catched");
+            PyErr_NormalizeException(&err, &arg, &trace);
+
+            if (PyObject_HasAttrString(arg, "args")) {
+                PyObject *args = PyObject_GetAttrString(arg, "args");
+                PyObject *str = PySequence_GetItem(args, 0);
+                const char *s = PyString_AS_STRING(str);
+
+                Dprintf("psyco_curs_execute:     -> %s", s);
+
+                if (!strcmp(s, "not enough arguments for format string")
+                  || !strcmp(s, "not all arguments converted")) {
+                    Dprintf("psyco_curs_execute:     -> got a match");
+                    psyco_set_error(ProgrammingError, (PyObject*)self,
+                                     s, NULL, NULL);
+                    pe = 1;
+                }
+
+                Py_DECREF(args);
+                Py_DECREF(str);
+            }
+        }
+
+        /* if we did not manage our own exception, restore old one */
+        if (pe == 1) {
+            Py_XDECREF(err); Py_XDECREF(arg); Py_XDECREF(trace);
+        }
+        else {
+            PyErr_Restore(err, arg, trace);
+        }
+    }
+
+    return fquery;
+}
+
 #define psyco_curs_execute_doc \
 "execute(query, vars=None) -- Execute query with bound vars."
 
@@ -731,8 +795,8 @@ _psyco_curs_execute(cursorObject *self,
         else if (mres == -2){ /* retry the old way */
             Dprintf("Fallback to the old pq_execute code");
 #ifdef PSYCOPG_DEBUG
-	    if (PyErr_Occurred())
-		PyErr_Print();
+            if (PyErr_Occurred())
+                PyErr_Print();
 #endif
             PyErr_Clear();
 #else /* no EXECPARAMS */
@@ -746,55 +810,8 @@ _psyco_curs_execute(cursorObject *self,
     }
 
     if (vars && cvt) {
-	/* Doesn't happen if exec params have been prepared */
-        /* if PyString_Format() return NULL an error occured: if the error is
-           a TypeError we need to check the exception.args[0] string for the
-           values:
-
-               "not enough arguments for format string"
-               "not all arguments converted"
-
-           and return the appropriate ProgrammingError. we do that by grabbing
-           the curren exception (we will later restore it if the type or the
-           strings do not match.) */
-
-        if (!(fquery = PyString_Format(operation, cvt))) {
-            PyObject *err, *arg, *trace;
-            int pe = 0;
-
-            PyErr_Fetch(&err, &arg, &trace);
-
-            if (err && PyErr_GivenExceptionMatches(err, PyExc_TypeError)) {
-                Dprintf("psyco_curs_execute: TypeError exception catched");
-                PyErr_NormalizeException(&err, &arg, &trace);
-
-                if (PyObject_HasAttrString(arg, "args")) {
-                    PyObject *args = PyObject_GetAttrString(arg, "args");
-                    PyObject *str = PySequence_GetItem(args, 0);
-                    const char *s = PyString_AS_STRING(str);
-
-                    Dprintf("psyco_curs_execute:     -> %s", s);
-
-                    if (!strcmp(s, "not enough arguments for format string")
-                      || !strcmp(s, "not all arguments converted")) {
-                        Dprintf("psyco_curs_execute:     -> got a match");
-                        psyco_set_error(ProgrammingError, (PyObject*)self,
-                                         s, NULL, NULL);
-                        pe = 1;
-                    }
-
-                    Py_DECREF(args);
-                    Py_DECREF(str);
-                }
-            }
-
-            /* if we did not manage our own exception, restore old one */
-            if (pe == 1) {
-                Py_XDECREF(err); Py_XDECREF(arg); Py_XDECREF(trace);
-            }
-            else {
-                PyErr_Restore(err, arg, trace);
-            }
+        /* Doesn't happen if exec params have been prepared */
+        if (!(fquery = _psyco_curs_merge_query_args(self, operation, cvt))) {
             goto fail;
         }
 
@@ -869,7 +886,7 @@ psyco_curs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
                 NULL, NULL);
             return NULL;
         }
-        if (self->conn->isolation_level == 0) {
+        if (self->conn->isolation_level == ISOLATION_LEVEL_AUTOCOMMIT) {
             psyco_set_error(ProgrammingError, (PyObject*)self,
                 "can't use a named cursor outside of transactions", NULL, NULL);
             return NULL;
@@ -883,6 +900,7 @@ psyco_curs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_ASYNC_IN_PROGRESS(self, execute);
+    EXC_IF_TPC_PREPARED(self->conn, execute);
 
     if (_psyco_curs_execute(self, operation, vars, self->conn->async)) {
         Py_INCREF(Py_None);
@@ -902,12 +920,12 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
     PyObject *operation = NULL, *vars = NULL;
     PyObject *v, *iter = NULL;
     int rowcount = 0;
-    
+
     static char *kwlist[] = {"query", "vars_list", NULL};
 
     /* reset rowcount to -1 to avoid setting it when an exception is raised */
     self->rowcount = -1;
-    
+
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO", kwlist,
                                      &operation, &vars)) {
         return NULL;
@@ -915,6 +933,7 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, executemany);
+    EXC_IF_TPC_PREPARED(self->conn, executemany);
 
     if (self->name != NULL) {
         psyco_set_error(ProgrammingError, (PyObject*)self,
@@ -959,10 +978,52 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
 "mogrify(query, vars=None) -> str -- Return query after vars binding."
 
 static PyObject *
+_psyco_curs_mogrify(cursorObject *self,
+                   PyObject *operation, PyObject *vars)
+{
+    PyObject *fquery = NULL, *cvt = NULL;
+
+    operation = _psyco_curs_validate_sql_basic(self, operation);
+    if (operation == NULL) { goto cleanup; }
+
+    Dprintf("psyco_curs_mogrify: starting mogrify");
+
+    /* here we are, and we have a sequence or a dictionary filled with
+       objects to be substituted (bound variables). we try to be smart and do
+       the right thing (i.e., what the user expects) */
+
+    if (vars && vars != Py_None)
+    {
+        if (_mogrify(vars, operation, self->conn, &cvt) == -1) {
+            goto cleanup;
+        }
+    }
+
+    if (vars && cvt) {
+        if (!(fquery = _psyco_curs_merge_query_args(self, operation, cvt))) {
+            goto cleanup;
+        }
+
+        Dprintf("psyco_curs_mogrify: cvt->refcnt = " FORMAT_CODE_PY_SSIZE_T
+            ", fquery->refcnt = " FORMAT_CODE_PY_SSIZE_T,
+            cvt->ob_refcnt, fquery->ob_refcnt);
+    }
+    else {
+        fquery = operation;
+        Py_INCREF(fquery);
+    }
+
+cleanup:
+    Py_XDECREF(operation);
+    Py_XDECREF(cvt);
+
+    return fquery;
+}
+
+static PyObject *
 psyco_curs_mogrify(cursorObject *self, PyObject *args, PyObject *kwargs)
 {
-    PyObject *vars = NULL, *cvt = NULL, *operation = NULL;
-    PyObject *fquery;
+    PyObject *vars = NULL, *operation = NULL;
 
     static char *kwlist[] = {"query", "vars", NULL};
 
@@ -971,79 +1032,9 @@ psyco_curs_mogrify(cursorObject *self, PyObject *args, PyObject *kwargs)
         return NULL;
     }
 
-    if (PyUnicode_Check(operation)) {
-        PyErr_SetString(NotSupportedError,
-                        "unicode queries not yet supported");
-        return NULL;
-    }
-
     EXC_IF_CURS_CLOSED(self);
-    IFCLEARPGRES(self->pgres);
 
-    /* note that we don't overwrite the last query executed on the cursor, we
-       just *return* the new query with bound variables
-
-       TODO: refactor the common mogrification code (see psycopg_curs_execute
-       for comments, the code is amost identical) */
-
-    if (vars)
-    {
-        if(_mogrify(vars, operation, self->conn, &cvt) == -1) return NULL;
-    }
-
-    if (vars && cvt) {
-        if (!(fquery = PyString_Format(operation, cvt))) {
-            PyObject *err, *arg, *trace;
-            int pe = 0;
-
-            PyErr_Fetch(&err, &arg, &trace);
-
-            if (err && PyErr_GivenExceptionMatches(err, PyExc_TypeError)) {
-                Dprintf("psyco_curs_execute: TypeError exception catched");
-                PyErr_NormalizeException(&err, &arg, &trace);
-
-                if (PyObject_HasAttrString(arg, "args")) {
-                    PyObject *args = PyObject_GetAttrString(arg, "args");
-                    PyObject *str = PySequence_GetItem(args, 0);
-                    const char *s = PyString_AS_STRING(str);
-
-                    Dprintf("psyco_curs_execute:     -> %s", s);
-
-                    if (!strcmp(s, "not enough arguments for format string")
-                      || !strcmp(s, "not all arguments converted")) {
-                        Dprintf("psyco_curs_execute:     -> got a match");
-                        psyco_set_error(ProgrammingError, (PyObject*)self,
-                                         s, NULL, NULL);
-                        pe = 1;
-                    }
-
-                    Py_DECREF(args);
-                    Py_DECREF(str);
-                }
-            }
-
-            /* if we did not manage our own exception, restore old one */
-            if (pe == 1) {
-                Py_XDECREF(err); Py_XDECREF(arg); Py_XDECREF(trace);
-            }
-            else {
-                PyErr_Restore(err, arg, trace);
-            }
-            return NULL;
-        }
-
-        Dprintf("psyco_curs_execute: cvt->refcnt = " FORMAT_CODE_PY_SSIZE_T
-            ", fquery->refcnt = " FORMAT_CODE_PY_SSIZE_T,
-            cvt->ob_refcnt, fquery->ob_refcnt
-          );
-        Py_DECREF(cvt);
-    }
-    else {
-        fquery = operation;
-        Py_INCREF(operation);
-    }
-
-    return fquery;
+    return _psyco_curs_mogrify(self, operation, vars);
 }
 #endif
 
@@ -1143,7 +1134,7 @@ _psyco_curs_buildrow_with_factory(cursorObject *self, int row)
     PyObject *res;
 
     n = PQnfields(self->pgres);
-    if ((res = PyObject_CallFunction(self->tuple_factory, "O", self))== NULL)
+    if (!(res = PyObject_CallFunctionObjArgs(self->tuple_factory, self, NULL)))
         return NULL;
 
     return _psyco_curs_buildrow_fill(self, res, row, n, 0);
@@ -1154,8 +1145,6 @@ psyco_curs_fetchone(cursorObject *self, PyObject *args)
 {
     PyObject *res;
 
-    if (args && !PyArg_ParseTuple(args, "")) return NULL;
-
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_ASYNC_IN_PROGRESS(self, fetchone);
     if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -1165,6 +1154,7 @@ psyco_curs_fetchone(cursorObject *self, PyObject *args)
         char buffer[128];
 
         EXC_IF_NO_MARK(self);
+        EXC_IF_TPC_PREPARED(self->conn, fetchone);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD 1 FROM %s", self->name);
         if (pq_execute(self, buffer, 0) == -1) return NULL;
         if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -1226,6 +1216,7 @@ psyco_curs_fetchmany(cursorObject *self, PyObject *args, PyObject *kwords)
         char buffer[128];
 
         EXC_IF_NO_MARK(self);
+        EXC_IF_TPC_PREPARED(self->conn, fetchone);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD %d FROM %s",
             (int)size, self->name);
         if (pq_execute(self, buffer, 0) == -1) return NULL;
@@ -1286,10 +1277,6 @@ psyco_curs_fetchall(cursorObject *self, PyObject *args)
     int i, size;
     PyObject *list, *res;
 
-    if (!PyArg_ParseTuple(args, "")) {
-        return NULL;
-    }
-
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_ASYNC_IN_PROGRESS(self, fetchall);
     if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -1299,6 +1286,7 @@ psyco_curs_fetchall(cursorObject *self, PyObject *args)
         char buffer[128];
 
         EXC_IF_NO_MARK(self);
+        EXC_IF_TPC_PREPARED(self->conn, fetchall);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD ALL FROM %s", self->name);
         if (pq_execute(self, buffer, 0) == -1) return NULL;
         if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -1360,6 +1348,7 @@ psyco_curs_callproc(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_ASYNC_IN_PROGRESS(self, callproc);
+    EXC_IF_TPC_PREPARED(self->conn, callproc);
 
     if (self->name != NULL) {
         psyco_set_error(ProgrammingError, (PyObject*)self,
@@ -1407,8 +1396,6 @@ psyco_curs_callproc(cursorObject *self, PyObject *args, PyObject *kwargs)
 static PyObject *
 psyco_curs_nextset(cursorObject *self, PyObject *args)
 {
-    if (!PyArg_ParseTuple(args, "")) return NULL;
-
     EXC_IF_CURS_CLOSED(self);
 
     PyErr_SetString(NotSupportedError, "not supported by PostgreSQL");
@@ -1505,6 +1492,7 @@ psyco_curs_scroll(cursorObject *self, PyObject *args, PyObject *kwargs)
         char buffer[128];
 
         EXC_IF_NO_MARK(self);
+        EXC_IF_TPC_PREPARED(self->conn, scroll);
 
         if (strcmp(mode, "absolute") == 0) {
             PyOS_snprintf(buffer, 127, "MOVE ABSOLUTE %d FROM %s",
@@ -1628,6 +1616,8 @@ psyco_curs_copy_from(cursorObject *self, PyObject *args, PyObject *kwargs)
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_from);
     EXC_IF_GREEN(copy_from);
+    EXC_IF_TPC_PREPARED(self->conn, copy_from);
+
 
     quoted_delimiter = psycopg_escape_string((PyObject*)self->conn, sep, 0, NULL, NULL);
     if (quoted_delimiter == NULL) {
@@ -1734,6 +1724,7 @@ psyco_curs_copy_to(cursorObject *self, PyObject *args, PyObject *kwargs)
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_to);
     EXC_IF_GREEN(copy_to);
+    EXC_IF_TPC_PREPARED(self->conn, copy_to);
 
     quoted_delimiter = psycopg_escape_string((PyObject*)self->conn, sep, 0, NULL, NULL);
     if (quoted_delimiter == NULL) {
@@ -1820,6 +1811,7 @@ psyco_curs_copy_expert(cursorObject *self, PyObject *args, PyObject *kwargs)
     EXC_IF_CURS_CLOSED(self);
     EXC_IF_CURS_ASYNC(self, copy_expert);
     EXC_IF_GREEN(copy_expert);
+    EXC_IF_TPC_PREPARED(self->conn, copy_expert);
 
     sql = _psyco_curs_validate_sql_basic(self, sql);
     
@@ -1918,21 +1910,21 @@ cursor_next(PyObject *self)
 static struct PyMethodDef cursorObject_methods[] = {
     /* DBAPI-2.0 core */
     {"close", (PyCFunction)psyco_curs_close,
-     METH_VARARGS, psyco_curs_close_doc},
+     METH_NOARGS, psyco_curs_close_doc},
     {"execute", (PyCFunction)psyco_curs_execute,
      METH_VARARGS|METH_KEYWORDS, psyco_curs_execute_doc},
     {"executemany", (PyCFunction)psyco_curs_executemany,
      METH_VARARGS|METH_KEYWORDS, psyco_curs_executemany_doc},
     {"fetchone", (PyCFunction)psyco_curs_fetchone,
-     METH_VARARGS, psyco_curs_fetchone_doc},
+     METH_NOARGS, psyco_curs_fetchone_doc},
     {"fetchmany", (PyCFunction)psyco_curs_fetchmany,
      METH_VARARGS|METH_KEYWORDS, psyco_curs_fetchmany_doc},
     {"fetchall", (PyCFunction)psyco_curs_fetchall,
-     METH_VARARGS, psyco_curs_fetchall_doc},
+     METH_NOARGS, psyco_curs_fetchall_doc},
     {"callproc", (PyCFunction)psyco_curs_callproc,
      METH_VARARGS, psyco_curs_callproc_doc},
     {"nextset", (PyCFunction)psyco_curs_nextset,
-     METH_VARARGS, psyco_curs_nextset_doc},
+     METH_NOARGS, psyco_curs_nextset_doc},
     {"setinputsizes", (PyCFunction)psyco_curs_setinputsizes,
      METH_VARARGS, psyco_curs_setinputsizes_doc},
     {"setoutputsize", (PyCFunction)psyco_curs_setoutputsize,

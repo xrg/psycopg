@@ -21,15 +21,23 @@ classes until a better place in the distribution is found.
 
 .. _dict-cursor:
 
+
+Connection and cursor subclasses
+--------------------------------
+
+A few objects that change the way the results are returned by the cursor or
+modify the object behavior in some other way. Typically `!connection`
+subclasses are passed as *connection_factory* argument to
+`~psycopg2.connect()` so that the connection will generate the matching
+`!cursor` subclass. Alternatively a `!cursor` subclass can be used one-off by
+passing it as the *cursor_factory* argument to the `~connection.cursor()`
+method of a regular `!connection`.
+
 Dictionary-like cursor
-----------------------
+^^^^^^^^^^^^^^^^^^^^^^
 
 The dict cursors allow to access to the retrieved records using an iterface
-similar to the Python dictionaries instead of the tuples. You can use it
-either passing `DictConnection` as `connection_factory` argument
-to the `~psycopg2.connect()` function or passing `DictCursor` as
-the `!cursor_factory` argument to the `~connection.cursor()` method
-of a regular `connection`.
+similar to the Python dictionaries instead of the tuples.
 
     >>> dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
     >>> dict_cur.execute("INSERT INTO test (num, data) VALUES(%s, %s)",
@@ -68,10 +76,37 @@ Real dictionary cursor
 
 
 .. index::
+    pair: Cursor; namedtuple
+
+`namedtuple` cursor
+^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.3
+
+These objects require `!collection.namedtuple()` to be found, so it is
+available out-of-the-box only from Python 2.6. Anyway, the namedtuple
+implementation is compatible with previous Python versions, so all you
+have to do is to `download it`__ and make it available where we
+expect it to be... ::
+
+    from somewhere import namedtuple
+    import collections
+    collections.namedtuple = namedtuple
+    from psycopg.extras import NamedTupleConnection
+    # ...
+
+.. __: http://code.activestate.com/recipes/500261-named-tuples/
+
+.. autoclass:: NamedTupleCursor
+
+.. autoclass:: NamedTupleConnection
+
+
+.. index::
     pair: Cursor; Logging
 
 Logging cursor
---------------
+^^^^^^^^^^^^^^
 
 .. autoclass:: LoggingConnection
     :members: initialize,filter
@@ -87,10 +122,46 @@ Logging cursor
 
 
 .. index::
+    single: Data types; Additional
+
+Additional data types
+---------------------
+
+
+.. index::
+    pair: hstore; Data types
+    pair: dict; Adaptation
+
+Hstore data type
+^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.3
+
+The |hstore|_ data type is a key-value store embedded in PostgreSQL.  It has
+been available for several server versions but with the release 9.0 it has
+been greatly improved in capacity and usefulness with the addiction of many
+functions.  It supports GiST or GIN indexes allowing search by keys or
+key/value pairs as well as regular BTree indexes for equality, uniqueness etc.
+
+Psycopg can convert Python `dict` objects to and from |hstore| structures.
+Only dictionaries with string/unicode keys and values are supported.  `None`
+is also allowed as value.  Psycopg uses a more efficient |hstore|
+representation when dealing with PostgreSQL 9.0 but previous server versions
+are supportes as well.  By default the adapter/typecaster are disabled: they
+can be enabled using the `register_hstore()` function.
+
+.. autofunction:: register_hstore
+
+.. |hstore| replace:: :sql:`hstore`
+.. _hstore: http://www.postgresql.org/docs/9.0/static/hstore.html
+
+
+
+.. index::
     pair: UUID; Data types
 
 UUID data type
---------------
+^^^^^^^^^^^^^^
 
 .. versionadded:: 2.0.9
 .. versionchanged:: 2.0.13 added UUID array support.
@@ -122,7 +193,7 @@ UUID data type
     pair: INET; Data types
 
 :sql:`inet` data type
-----------------------
+^^^^^^^^^^^^^^^^^^^^^^
 
 .. versionadded:: 2.0.9
 
@@ -155,11 +226,13 @@ Fractional time zones
 
     .. versionadded:: 2.0.9
 
-    .. versionchanged:: 2.2.0
+    .. versionchanged:: 2.2.2
         function is no-op: see :ref:`tz-handling`.
 
 .. index::
    pair: Example; Coroutine;
+
+
 
 Coroutine support
 -----------------
