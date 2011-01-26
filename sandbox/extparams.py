@@ -18,7 +18,7 @@ parser.add_option("-t", None,
                   help="Uses the old (installed) library")
 
 parser.add_option("-n", "--num-reps", dest="num_reps", 
-		  help="Number of repetitions for stress test",)
+                  help="Number of repetitions for stress test",)
 
 parser.add_option("-N", "--no-stress",
                   action="store_false", dest="stress", default=True,
@@ -79,9 +79,9 @@ if options.regulars:
     print cr.fetchall()
 
     def testUUIDARRAY():
-	import uuid
-	import psycopg2.extras
-	psycopg2.extras.register_uuid()
+        import uuid
+        import psycopg2.extras
+        psycopg2.extras.register_uuid()
         u = [uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e350'), uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e352')]
         cr.execute("SELECT %s AS foo", (u,))
         
@@ -114,8 +114,8 @@ if options.regulars:
 if options.stress:
     ran = []
     for r in range(1, 500):
-	ran.extend([r, 0.4* r, u'αβγ' + str(r)])
-	# ran.extend([r * 0.1, r* 0.15, r* 0.3])
+        ran.extend([r, 0.4* r, u'αβγ' + str(r)])
+        # ran.extend([r * 0.1, r* 0.15, r* 0.3])
     print "trying with: ", ran[:5]
     qry = 'SELECT (' + ', '.join([ '%s' for x in ran]) + ');'
     for i in range(1, 1000):
