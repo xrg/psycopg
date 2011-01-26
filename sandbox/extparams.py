@@ -109,6 +109,12 @@ if options.regulars:
     cr.execute('SELECT %s', ([ 1, 2, 3, 4 ],))
     print "Result 3:", cr.fetchall()
     
+    cr.execute('SELECT %(a)s; ', { 'a': 1234 })
+    print "Result 4:", cr.fetchall()
+    
+    cr.execute('SELECT %(a)s, %(b)s', { 'a': 1234, 'b': 9876})
+    print "Result 5:", cr.fetchall()
+    
     testUUIDARRAY()
 
 if options.stress:
