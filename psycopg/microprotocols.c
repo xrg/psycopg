@@ -598,6 +598,7 @@ int _psyco_list2bin(PyObject *obj, char** data, int* len,
 	int has_nulls = 0;
 	struct pq_exec_args ourargs;
 	Oid itemoid = 0;
+	uint32_t *buf;
 	PyObject *ito;
 	int ri;
 	/* First, try with the data */
@@ -649,7 +650,7 @@ int _psyco_list2bin(PyObject *obj, char** data, int* len,
 	serialize them into one big buffer
 	*/
 	*data = PyMem_Malloc(buflen);
-	uint32_t *buf = (uint32_t*) *data;
+	buf = (uint32_t*) *data;
 	if (! *data)
 	    goto fail;
 	
