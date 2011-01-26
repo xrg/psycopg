@@ -45,13 +45,13 @@ class CursorTests(unittest.TestCase):
 
         # unicode args
         cur.execute("SELECT %s;", (snowman,))
-        self.assertEqual(snowman.encode("utf-8"), cur.fetchone()[0])
+        self.assertEqual(snowman, cur.fetchone()[0])
         self.assertEqual("SELECT '%s';" % snowman.encode('utf8'),
             cur.mogrify("SELECT %s;", (snowman,)).replace("E'", "'"))
 
         # unicode query and args
         cur.execute(u"SELECT %s;", (snowman,))
-        self.assertEqual(snowman.encode("utf-8"), cur.fetchone()[0])
+        self.assertEqual(snowman, cur.fetchone()[0])
         self.assertEqual("SELECT '%s';" % snowman.encode('utf8'),
             cur.mogrify(u"SELECT %s;", (snowman,)).replace("E'", "'"))
 
