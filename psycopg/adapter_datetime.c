@@ -392,9 +392,10 @@ psyco_Timestamp(PyObject *self, PyObject *args)
 {
     PyObject *res = NULL;
     PyObject *tzinfo = NULL;
-    int year, month, day;
+    long year;
+    int month, day;
     int hour=0, minute=0; /* default to midnight */
-    double micro, second=0.0;
+    double micro=0.0, second=0.0;
 
     PyObject* obj = NULL;
 
