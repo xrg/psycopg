@@ -58,7 +58,7 @@ from distutils.ccompiler import get_default_compiler
 
 PSYCOPG_VERSION = '2.3.2'
 
-version_flags   = ['dt', 'dec']
+version_flags   = ['dt', 'dec', 'xpr']
 
 PLATFORM_IS_WINDOWS = sys.platform.lower().startswith('win')
 
