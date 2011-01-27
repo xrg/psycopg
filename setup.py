@@ -75,7 +75,7 @@ except ImportError:
 
 PSYCOPG_VERSION = '2.4.5'
 
-version_flags   = ['dt', 'dec']
+version_flags   = ['dt', 'dec', 'xpr']
 
 PLATFORM_IS_WINDOWS = sys.platform.lower().startswith('win')
 
