@@ -348,6 +348,10 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         return _psyco_bool2bin(obj, pargs->paramValues+index,
                         pargs->paramLengths+index, &pargs->paramTypes[index],
                         &pargs->obRefs[index], &pargs->paramFormats[index]);
+    else if (obj && obj->ob_type == &PyTuple_Type)
+        // Short circuit, avoid adaptation and call cycles below
+        // to be removed, if tuples are ever supported in binary
+        return -2;
 
     for (p2b = psyco_py2bins; p2b->pyType ; p2b++)
         if (p2b->pyType == obj->ob_type){
