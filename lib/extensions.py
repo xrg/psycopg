@@ -136,6 +136,8 @@ class SQL_IN(object):
     def __str__(self):
         return str(self.getquoted())
 
+    def getraw(self):
+        raise NotImplementedError()
 
 class NoneAdapter(object):
     """Adapt None to NULL.
