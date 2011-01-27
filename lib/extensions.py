@@ -127,5 +127,7 @@ class SQL_IN(object):
 
     __str__ = getquoted
 
+    def getraw(self):
+        raise NotImplementedError()
 
 __all__ = filter(lambda k: not k.startswith('_'), locals().keys())

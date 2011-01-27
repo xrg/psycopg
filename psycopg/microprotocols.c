@@ -397,6 +397,10 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         
         res = PyObject_CallMethod(tmp, "getraw", NULL);
         if (res == NULL){
+            if (PyErr_Occurred() && PyErr_ExceptionMatches(PyExc_NotImplementedError)){
+                PyErr_Clear();
+                return -2;
+            }
             Dprintf("No %s.getraw() attribute provided", tmp->ob_type->tp_name);
             if (PyErr_Occurred() && PyErr_ExceptionMatches(PyExc_AttributeError))
                 PyErr_Format(PyExc_AttributeError, 
