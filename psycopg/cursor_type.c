@@ -479,7 +479,6 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
         }
     }
     
-    
     c = c_begin;
     _resize_pargs(pargs, nParams);
     if (resize_charbuf(&rs_begin, NULL, cmdlen+1, &cmd_alloc) == -1)
@@ -491,6 +490,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
     while(*c) {
         if (c[0] == '%' && c[1] == '%') {
             *(rs++) = '%';
+            c+=2;
         }
         else if (c[0] == '%' && c[1] == '(') {
 
@@ -514,6 +514,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
                 Dprintf("_mogrify_execparams: value refcnt: "
                   FORMAT_CODE_PY_SSIZE_T " (+1)", value->ob_refcnt);
 
+                d++;
                 /* This is the place where we *ignore* width specifier
                    and/or sign (like %-10s)
                 */
@@ -550,7 +551,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
                         for (i = 0; i < nlen ; i++)
                             *(rs++) = nbuf[i];
                     }else if (ri == 1) {
-                        i = sprintf(rs,"$%d",oindex);
+                        i = sprintf(rs,"$%d", oindex+1);
                         rs += i;
                     }
                     oindex += ri;
