@@ -715,6 +715,7 @@ int _psyco_list2bin(PyObject *obj, char** data, int* len,
 	    default:
 		Dprintf("Could not get a solid array type for oid %d", itemoid);
 		*ptype = ANYARRAYOID;
+		goto fail; // TODO: until we make anyarray work..
 	}
 	*len = buflen;
 	*fmt = 1;
