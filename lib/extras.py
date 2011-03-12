@@ -26,6 +26,7 @@ and classes untill a better place in the distribution is found.
 # License for more details.
 
 import os
+import sys
 import time
 import codecs
 import warnings
@@ -41,13 +42,14 @@ from psycopg2 import extensions as _ext
 from psycopg2.extensions import cursor as _cursor
 from psycopg2.extensions import connection as _connection
 from psycopg2.extensions import adapt as _A
+from psycopg2.extensions import b
 
 
 class DictCursorBase(_cursor):
     """Base class for all dict-like cursors."""
 
     def __init__(self, *args, **kwargs):
-        if kwargs.has_key('row_factory'):
+        if 'row_factory' in kwargs:
             row_factory = kwargs['row_factory']
             del kwargs['row_factory']
         else:
@@ -140,20 +142,17 @@ class DictRow(list):
         self[:] = [None] * len(cursor.description)
 
     def __getitem__(self, x):
-        if type(x) != int:
+        if not isinstance(x, (int, slice)):
             x = self._index[x]
         return list.__getitem__(self, x)
 
     def __setitem__(self, x, v):
-        if type(x) != int:
+        if not isinstance(x, (int, slice)):
             x = self._index[x]
         list.__setitem__(self, x, v)
 
     def items(self):
-        res = []
-        for n, v in self._index.items():
-            res.append((n, list.__getitem__(self, v)))
-        return res
+        return list(self.iteritems())
 
     def keys(self):
         return self._index.keys()
@@ -162,7 +161,7 @@ class DictRow(list):
         return tuple(self[:])
 
     def has_key(self, x):
-        return self._index.has_key(x)
+        return x in self._index
 
     def get(self, x, default=None):
         try:
@@ -171,7 +170,7 @@ class DictRow(list):
             return default
 
     def iteritems(self):
-        for n, v in self._index.items():
+        for n, v in self._index.iteritems():
             yield n, list.__getitem__(self, v)
 
     def iterkeys(self):
@@ -181,10 +180,18 @@ class DictRow(list):
         return list.__iter__(self)
 
     def copy(self):
-        return dict(self.items())
+        return dict(self.iteritems())
 
     def __contains__(self, x):
-        return self._index.__contains__(x)
+        return x in self._index
+
+    # grop the crusty Py2 methods
+    if sys.version_info[0] > 2:
+        items = iteritems; del iteritems
+        keys = iterkeys; del iterkeys
+        values = itervalues; del itervalues
+        del has_key
+
 
 class RealDictConnection(_connection):
     """A connection that uses `RealDictCursor` automatically."""
@@ -225,7 +232,7 @@ class RealDictCursor(DictCursorBase):
             self._query_executed = 0
 
 class RealDictRow(dict):
-    """A ``dict`` subclass representing a data record."""
+    """A `!dict` subclass representing a data record."""
 
     __slots__ = ('_column_mapping')
 
@@ -246,7 +253,7 @@ class NamedTupleConnection(_connection):
         return _connection.cursor(self, *args, **kwargs)
 
 class NamedTupleCursor(_cursor):
-    """A cursor that generates results as |namedtuple|__.
+    """A cursor that generates results as `~collections.namedtuple`.
 
     `!fetch*()` methods will return named tuples instead of regular tuples, so
     their elements can be accessed both as regular numeric items as well as
@@ -260,9 +267,6 @@ class NamedTupleCursor(_cursor):
         100
         >>> rec.data
         "abc'def"
-
-    .. |namedtuple| replace:: `!namedtuple`
-    .. __: http://docs.python.org/release/2.6/library/collections.html#collections.namedtuple
     """
     Record = None
 
@@ -320,9 +324,9 @@ class LoggingConnection(_connection):
     """
 
     def initialize(self, logobj):
-        """Initialize the connection to log to ``logobj``.
+        """Initialize the connection to log to `!logobj`.
 
-        The ``logobj`` parameter can be an open file object or a Logger
+        The `!logobj` parameter can be an open file object or a Logger
         instance from the standard logging module.
         """
         self._logobj = logobj
@@ -501,7 +505,7 @@ class Inet(object):
         obj = _A(self.addr)
         if hasattr(obj, 'prepare'):
             obj.prepare(self._conn)
-        return obj.getquoted()+"::inet"
+        return obj.getquoted() + b("::inet")
 
     def __conform__(self, foo):
         if foo is _ext.ISQLQuote:
@@ -568,7 +572,7 @@ class HstoreAdapter(object):
     def _getquoted_8(self):
         """Use the operators available in PG pre-9.0."""
         if not self.wrapped:
-            return "''::hstore"
+            return b("''::hstore")
 
         adapt = _ext.adapt
         rv = []
@@ -582,22 +586,23 @@ class HstoreAdapter(object):
                 v.prepare(self.conn)
                 v = v.getquoted()
             else:
-                v = 'NULL'
+                v = b('NULL')
 
-            rv.append("(%s => %s)" % (k, v))
+            # XXX this b'ing is painfully inefficient!
+            rv.append(b("(") + k + b(" => ") + v + b(")"))
 
-        return "(" + '||'.join(rv) + ")"
+        return b("(") + b('||').join(rv) + b(")")
 
     def _getquoted_9(self):
         """Use the hstore(text[], text[]) function."""
         if not self.wrapped:
-            return "''::hstore"
+            return b("''::hstore")
 
         k = _ext.adapt(self.wrapped.keys())
         k.prepare(self.conn)
         v = _ext.adapt(self.wrapped.values())
         v.prepare(self.conn)
-        return "hstore(%s, %s)" % (k.getquoted(), v.getquoted())
+        return b("hstore(") + k.getquoted() + b(", ") + v.getquoted() + b(")")
 
     getquoted = _getquoted_9
 
@@ -614,10 +619,8 @@ class HstoreAdapter(object):
         (?:\s*,\s*|$) # pairs separated by comma or end of string.
     """, regex.VERBOSE)
 
-    # backslash decoder
-    _bsdec = codecs.getdecoder("string_escape")
-
-    def parse(self, s, cur, _decoder=_bsdec):
+    @classmethod
+    def parse(self, s, cur, _bsdec=regex.compile(r"\\(.)")):
         """Parse an hstore representation in a Python string.
 
         The hstore is represented as something like::
@@ -635,10 +638,10 @@ class HstoreAdapter(object):
             if m is None or m.start() != start:
                 raise psycopg2.InterfaceError(
                     "error parsing hstore pair at char %d" % start)
-            k = _decoder(m.group(1))[0]
+            k = _bsdec.sub(r'\1', m.group(1))
             v = m.group(2)
             if v is not None:
-                v = _decoder(v)[0]
+                v = _bsdec.sub(r'\1', v)
 
             rv[k] = v
             start = m.end()
@@ -649,22 +652,18 @@ class HstoreAdapter(object):
 
         return rv
 
-    parse = classmethod(parse)
-
+    @classmethod
     def parse_unicode(self, s, cur):
         """Parse an hstore returning unicode keys and values."""
-        codec = codecs.getdecoder(_ext.encodings[cur.connection.encoding])
-        bsdec = self._bsdec
-        decoder = lambda s: codec(bsdec(s)[0])
-        return self.parse(s, cur, _decoder=decoder)
+        if s is None:
+            return None
 
-    parse_unicode = classmethod(parse_unicode)
+        s = s.decode(_ext.encodings[cur.connection.encoding])
+        return self.parse(s, cur)
 
     @classmethod
     def get_oids(self, conn_or_curs):
-        """Return the oid of the hstore and hstore[] types.
-
-        Return None if hstore is not available.
+        """Return the lists of OID of the hstore and hstore[] types.
         """
         if hasattr(conn_or_curs, 'execute'):
             conn = conn_or_curs.connection
@@ -679,56 +678,231 @@ class HstoreAdapter(object):
         # column typarray not available before PG 8.3
         typarray = conn.server_version >= 80300 and "typarray" or "NULL"
 
+        rv0, rv1 = [], []
+
         # get the oid for the hstore
         curs.execute("""\
 SELECT t.oid, %s
 FROM pg_type t JOIN pg_namespace ns
     ON typnamespace = ns.oid
-WHERE typname = 'hstore' and nspname = 'public';
+WHERE typname = 'hstore';
 """ % typarray)
-        oids = curs.fetchone()
+        for oids in curs:
+            rv0.append(oids[0])
+            rv1.append(oids[1])
 
         # revert the status of the connection as before the command
         if (conn_status != _ext.STATUS_IN_TRANSACTION
         and conn.isolation_level != _ext.ISOLATION_LEVEL_AUTOCOMMIT):
             conn.rollback()
 
-        return oids
+        return tuple(rv0), tuple(rv1)
 
-def register_hstore(conn_or_curs, globally=False, unicode=False):
-    """Register adapter and typecaster for `dict`\-\ |hstore| conversions.
+def register_hstore(conn_or_curs, globally=False, unicode=False, oid=None):
+    """Register adapter and typecaster for `!dict`\-\ |hstore| conversions.
 
-    The function must receive a connection or cursor as the |hstore| oid is
-    different in each database. The typecaster will normally be registered
-    only on the connection or cursor passed as argument. If your application
-    uses a single database you can pass *globally*\=True to have the typecaster
-    registered on all the connections.
+    :param conn_or_curs: a connection or cursor: the typecaster will be
+        registered only on this object unless *globally* is set to `!True`
+    :param globally: register the adapter globally, not only on *conn_or_curs*
+    :param unicode: if `!True`, keys and values returned from the database
+        will be `!unicode` instead of `!str`. The option is not available on
+        Python 3
+    :param oid: the OID of the |hstore| type if known. If not, it will be
+        queried on *conn_or_curs*
 
-    By default the returned dicts will have `str` objects as keys and values:
-    use *unicode*\=True to return `unicode` objects instead.  When adapting a
-    dictionary both `str` and `unicode` keys and values are handled (the
-    `unicode` values will be converted according to the current
-    `~connection.encoding`).
+    The connection or cursor passed to the function will be used to query the
+    database and look for the OID of the |hstore| type (which may be different
+    across databases). If querying is not desirable (e.g. with
+    :ref:`asynchronous connections <async-support>`) you may specify it in the
+    *oid* parameter (it can be found using a query such as :sql:`SELECT
+    'hstore'::regtype::oid;`).
+
+    Note that, when passing a dictionary from Python to the database, both
+    strings and unicode keys and values are supported. Dictionaries returned
+    from the database have keys/values according to the *unicode* parameter.
 
     The |hstore| contrib module must be already installed in the database
     (executing the ``hstore.sql`` script in your ``contrib`` directory).
     Raise `~psycopg2.ProgrammingError` if the type is not found.
+
+    .. versionchanged:: 2.4
+        added the *oid* parameter. If not specified, the typecaster is
+        installed also if |hstore| is not installed in the :sql:`public`
+        schema.
     """
-    oids = HstoreAdapter.get_oids(conn_or_curs)
-    if oids is None:
-        raise psycopg2.ProgrammingError(
-            "hstore type not found in the database. "
-            "please install it from your 'contrib/hstore.sql' file")
+    if oid is None:
+        oid = HstoreAdapter.get_oids(conn_or_curs)
+        if oid is None or not oid[0]:
+            raise psycopg2.ProgrammingError(
+                "hstore type not found in the database. "
+                "please install it from your 'contrib/hstore.sql' file")
+        else:
+            oid = oid[0]  # for the moment we don't have a HSTOREARRAY
+
+    if isinstance(oid, int):
+        oid = (oid,)
 
     # create and register the typecaster
-    if unicode:
+    if sys.version_info[0] < 3 and unicode:
         cast = HstoreAdapter.parse_unicode
     else:
         cast = HstoreAdapter.parse
 
-    HSTORE = _ext.new_type((oids[0],), "HSTORE", cast)
+    HSTORE = _ext.new_type(oid, "HSTORE", cast)
     _ext.register_type(HSTORE, not globally and conn_or_curs or None)
     _ext.register_adapter(dict, HstoreAdapter)
+
+
+class CompositeCaster(object):
+    """Helps conversion of a PostgreSQL composite type into a Python object.
+
+    The class is usually created by the `register_composite()` function.
+
+    .. attribute:: name
+
+        The name of the PostgreSQL type.
+
+    .. attribute:: oid
+
+        The oid of the PostgreSQL type.
+
+    .. attribute:: type
+
+        The type of the Python objects returned. If :py:func:`collections.namedtuple()`
+        is available, it is a named tuple with attributes equal to the type
+        components. Otherwise it is just the `!tuple` object.
+
+    .. attribute:: attnames
+
+        List of component names of the type to be casted.
+
+    .. attribute:: atttypes
+
+        List of component type oids of the type to be casted.
+
+    """
+    def __init__(self, name, oid, attrs):
+        self.name = name
+        self.oid = oid
+
+        self.attnames = [ a[0] for a in attrs ]
+        self.atttypes = [ a[1] for a in attrs ]
+        self._create_type(name, self.attnames)
+        self.typecaster = _ext.new_type((oid,), name, self.parse)
+
+    def parse(self, s, curs):
+        if s is None:
+            return None
+
+        tokens = self.tokenize(s)
+        if len(tokens) != len(self.atttypes):
+            raise psycopg2.DataError(
+                "expecting %d components for the type %s, %d found instead",
+                (len(self.atttypes), self.name, len(self.tokens)))
+
+        attrs = [ curs.cast(oid, token)
+            for oid, token in zip(self.atttypes, tokens) ]
+        return self._ctor(*attrs)
+
+    _re_tokenize = regex.compile(r"""
+  \(? ([,\)])                       # an empty token, representing NULL
+| \(? " ((?: [^"] | "")*) " [,)]    # or a quoted string
+| \(? ([^",\)]+) [,\)]              # or an unquoted string
+    """, regex.VERBOSE)
+
+    _re_undouble = regex.compile(r'(["\\])\1')
+
+    @classmethod
+    def tokenize(self, s):
+        rv = []
+        for m in self._re_tokenize.finditer(s):
+            if m is None:
+                raise psycopg2.InterfaceError("can't parse type: %r", s)
+            if m.group(1):
+                rv.append(None)
+            elif m.group(2):
+                rv.append(self._re_undouble.sub(r"\1", m.group(2)))
+            else:
+                rv.append(m.group(3))
+
+        return rv
+
+    def _create_type(self, name, attnames):
+        try:
+            from collections import namedtuple
+        except ImportError:
+            self.type = tuple
+            self._ctor = lambda *args: tuple(args)
+        else:
+            self.type = namedtuple(name, attnames)
+            self._ctor = self.type
+
+    @classmethod
+    def _from_db(self, name, conn_or_curs):
+        """Return a `CompositeCaster` instance for the type *name*.
+
+        Raise `ProgrammingError` if the type is not found.
+        """
+        if hasattr(conn_or_curs, 'execute'):
+            conn = conn_or_curs.connection
+            curs = conn_or_curs
+        else:
+            conn = conn_or_curs
+            curs = conn_or_curs.cursor()
+
+        # Store the transaction status of the connection to revert it after use
+        conn_status = conn.status
+
+        # Use the correct schema
+        if '.' in name:
+            schema, tname = name.split('.', 1)
+        else:
+            tname = name
+            schema = 'public'
+
+        # get the type oid and attributes
+        curs.execute("""\
+SELECT t.oid, attname, atttypid
+FROM pg_type t
+JOIN pg_namespace ns ON typnamespace = ns.oid
+JOIN pg_attribute a ON attrelid = typrelid
+WHERE typname = %s and nspname = %s
+ORDER BY attnum;
+""", (tname, schema))
+
+        recs = curs.fetchall()
+
+        # revert the status of the connection as before the command
+        if (conn_status != _ext.STATUS_IN_TRANSACTION
+        and conn.isolation_level != _ext.ISOLATION_LEVEL_AUTOCOMMIT):
+            conn.rollback()
+
+        if not recs:
+            raise psycopg2.ProgrammingError(
+                "PostgreSQL type '%s' not found" % name)
+
+        type_oid = recs[0][0]
+        type_attrs = [ (r[1], r[2]) for r in recs ]
+
+        return CompositeCaster(tname, type_oid, type_attrs)
+
+def register_composite(name, conn_or_curs, globally=False):
+    """Register a typecaster to convert a composite type into a tuple.
+
+    :param name: the name of a PostgreSQL composite type, e.g. created using
+        the |CREATE TYPE|_ command
+    :param conn_or_curs: a connection or cursor used to find the type oid and
+        components; the typecaster is registered in a scope limited to this
+        object, unless *globally* is set to `!True`
+    :param globally: if `!False` (default) register the typecaster only on
+        *conn_or_curs*, otherwise register it globally
+    :return: the registered `CompositeCaster` instance responsible for the
+        conversion
+    """
+    caster = CompositeCaster._from_db(name, conn_or_curs)
+    _ext.register_type(caster.typecaster, not globally and conn_or_curs or None)
+
+    return caster
 
 
 __all__ = filter(lambda k: not k.startswith('_'), locals().keys())

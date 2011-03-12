@@ -1,10 +1,32 @@
 #!/usr/bin/env python
 
+# test_dates.py - unit test for dates handling
+#
+# Copyright (C) 2008-2011 James Henstridge  <james@jamesh.id.au>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
+
 import math
 import unittest
-import tests
 import psycopg2
 from psycopg2.tz import FixedOffsetTimezone
+from testconfig import dsn
 
 class CommonDatetimeTestsMixin:
 
@@ -75,7 +97,7 @@ class DatetimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
     """Tests for the datetime based date handling in psycopg2."""
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         self.curs = self.conn.cursor()
         self.DATE = psycopg2._psycopg.PYDATE
         self.TIME = psycopg2._psycopg.PYTIME
@@ -243,18 +265,18 @@ class DatetimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
 
     def test_type_roundtrip_date(self):
         from datetime import date
-        self._test_type_roundtrip(date(2010,05,03))
+        self._test_type_roundtrip(date(2010,5,3))
 
     def test_type_roundtrip_datetime(self):
         from datetime import datetime
-        dt = self._test_type_roundtrip(datetime(2010,05,03,10,20,30))
+        dt = self._test_type_roundtrip(datetime(2010,5,3,10,20,30))
         self.assertEqual(None, dt.tzinfo)
 
     def test_type_roundtrip_datetimetz(self):
         from datetime import datetime
         import psycopg2.tz
         tz = psycopg2.tz.FixedOffsetTimezone(8*60)
-        dt1 = datetime(2010,05,03,10,20,30, tzinfo=tz)
+        dt1 = datetime(2010,5,3,10,20,30, tzinfo=tz)
         dt2 = self._test_type_roundtrip(dt1)
         self.assertNotEqual(None, dt2.tzinfo)
         self.assertEqual(dt1, dt2)
@@ -269,11 +291,11 @@ class DatetimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
 
     def test_type_roundtrip_date_array(self):
         from datetime import date
-        self._test_type_roundtrip_array(date(2010,05,03))
+        self._test_type_roundtrip_array(date(2010,5,3))
 
     def test_type_roundtrip_datetime_array(self):
         from datetime import datetime
-        self._test_type_roundtrip_array(datetime(2010,05,03,10,20,30))
+        self._test_type_roundtrip_array(datetime(2010,5,3,10,20,30))
 
     def test_type_roundtrip_time_array(self):
         from datetime import time
@@ -293,7 +315,7 @@ class mxDateTimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
     """Tests for the mx.DateTime based date handling in psycopg2."""
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         self.curs = self.conn.cursor()
         self.DATE = psycopg2._psycopg.MXDATE
         self.TIME = psycopg2._psycopg.MXTIME
@@ -426,11 +448,11 @@ class mxDateTimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
 
     def test_type_roundtrip_date(self):
         from mx.DateTime import Date
-        self._test_type_roundtrip(Date(2010,05,03))
+        self._test_type_roundtrip(Date(2010,5,3))
 
     def test_type_roundtrip_datetime(self):
         from mx.DateTime import DateTime
-        self._test_type_roundtrip(DateTime(2010,05,03,10,20,30))
+        self._test_type_roundtrip(DateTime(2010,5,3,10,20,30))
 
     def test_type_roundtrip_time(self):
         from mx.DateTime import Time
@@ -442,11 +464,11 @@ class mxDateTimeTests(unittest.TestCase, CommonDatetimeTestsMixin):
 
     def test_type_roundtrip_date_array(self):
         from mx.DateTime import Date
-        self._test_type_roundtrip_array(Date(2010,05,03))
+        self._test_type_roundtrip_array(Date(2010,5,3))
 
     def test_type_roundtrip_datetime_array(self):
         from mx.DateTime import DateTime
-        self._test_type_roundtrip_array(DateTime(2010,05,03,10,20,30))
+        self._test_type_roundtrip_array(DateTime(2010,5,3,10,20,30))
 
     def test_type_roundtrip_time_array(self):
         from mx.DateTime import Time

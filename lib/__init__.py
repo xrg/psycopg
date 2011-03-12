@@ -62,26 +62,32 @@ if sys.version_info[0] >= 2 and sys.version_info[1] >= 4:
             RuntimeWarning)
 del sys, warnings
 
-from psycopg2 import tz
+# Note: the first internal import should be _psycopg, otherwise the real cause
+# of a failed loading of the C module may get hidden, see
+# http://archives.postgresql.org/psycopg/2011-02/msg00044.php
 
 # Import the DBAPI-2.0 stuff into top-level module.
 
-from _psycopg import BINARY, NUMBER, STRING, DATETIME, ROWID
+from psycopg2._psycopg import BINARY, NUMBER, STRING, DATETIME, ROWID
 
-from _psycopg import Binary, Date, Time, Timestamp
-from _psycopg import DateFromTicks, TimeFromTicks, TimestampFromTicks
+from psycopg2._psycopg import Binary, Date, Time, Timestamp
+from psycopg2._psycopg import DateFromTicks, TimeFromTicks, TimestampFromTicks
 
-from _psycopg import Error, Warning, DataError, DatabaseError, ProgrammingError
-from _psycopg import IntegrityError, InterfaceError, InternalError
-from _psycopg import NotSupportedError, OperationalError
+from psycopg2._psycopg import Error, Warning, DataError, DatabaseError, ProgrammingError
+from psycopg2._psycopg import IntegrityError, InterfaceError, InternalError
+from psycopg2._psycopg import NotSupportedError, OperationalError
 
-from _psycopg import connect, apilevel, threadsafety, paramstyle
-from _psycopg import __version__
+from psycopg2._psycopg import connect, apilevel, threadsafety, paramstyle
+from psycopg2._psycopg import __version__
+
+from psycopg2 import tz
+
 
 # Register default adapters.
 
 import psycopg2.extensions as _ext
 _ext.register_adapter(tuple, _ext.SQL_IN)
+_ext.register_adapter(type(None), _ext.NoneAdapter)
 
 __all__ = filter(lambda k: not k.startswith('_'), locals().keys())
 

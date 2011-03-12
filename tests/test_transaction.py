@@ -1,17 +1,39 @@
 #!/usr/bin/env python
+
+# test_transaction - unit test on transaction behaviour
+#
+# Copyright (C) 2007-2011 Federico Di Gregorio  <fog@debian.org>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
+
 import threading
-from testutils import unittest, skip_if_no_pg_sleep
+from testutils import unittest, skip_before_postgres
 
 import psycopg2
 from psycopg2.extensions import (
     ISOLATION_LEVEL_SERIALIZABLE, STATUS_BEGIN, STATUS_READY)
-import tests
-
+from testconfig import dsn
 
 class TransactionTests(unittest.TestCase):
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         self.conn.set_isolation_level(ISOLATION_LEVEL_SERIALIZABLE)
         curs = self.conn.cursor()
         curs.execute('''
@@ -75,7 +97,7 @@ class DeadlockSerializationTests(unittest.TestCase):
     """Test deadlock and serialization failure errors."""
 
     def connect(self):
-        conn = psycopg2.connect(tests.dsn)
+        conn = psycopg2.connect(dsn)
         conn.set_isolation_level(ISOLATION_LEVEL_SERIALIZABLE)
         return conn
 
@@ -208,13 +230,13 @@ class QueryCancellationTests(unittest.TestCase):
     """Tests for query cancellation."""
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         self.conn.set_isolation_level(ISOLATION_LEVEL_SERIALIZABLE)
 
     def tearDown(self):
         self.conn.close()
 
-    @skip_if_no_pg_sleep('conn')
+    @skip_before_postgres(8, 2)
     def test_statement_timeout(self):
         curs = self.conn.cursor()
         # Set a low statement timeout, then sleep for a longer period.

@@ -51,17 +51,29 @@ functionalities defined by the |DBAPI|_.
 
     .. attribute:: mode
 
-        The mode the database was open (``r``, ``w``, ``rw`` or ``n``).
+        The mode the database was open. See `connection.lobject()` for a
+        description of the available modes.
 
     .. method:: read(bytes=-1)
 
         Read a chunk of data from the current file position. If -1 (default)
         read all the remaining data.
 
+        The result is an Unicode string (decoded according to
+        `connection.encoding`) if the file was open in ``t`` mode, a bytes
+        string for ``b`` mode.
+
+        .. versionchanged:: 2.4
+            added Unicode support.
+
     .. method:: write(str)
 
         Write a string to the large object. Return the number of bytes
-        written.
+        written. Unicode strings are encoded in the `connection.encoding`
+        before writing.
+
+        .. versionchanged:: 2.4
+            added Unicode support.
 
     .. method:: export(file_name)
 
@@ -177,8 +189,9 @@ deal with Python objects adaptation:
     .. method:: getquoted()
 
         Subclasses or other conforming objects should return a valid SQL
-        string representing the wrapped object. The `!ISQLQuote`
-        implementation does nothing.
+        string representing the wrapped object. In Python 3 the SQL must be
+        returned in a `!bytes` object. The `!ISQLQuote` implementation does
+        nothing.
 
     .. method:: prepare(conn)
 
@@ -188,10 +201,10 @@ deal with Python objects adaptation:
 
         A conform object can implement this method if the SQL
         representation depends on any server parameter, such as the server
-        version or the ``standard_conforming_string`` setting.  Container
+        version or the :envvar:`standard_conforming_string` setting.  Container
         objects may store the connection and use it to recursively prepare
         contained objects: see the implementation for
-        ``psycopg2.extensions.SQL_IN`` for a simple example.
+        `psycopg2.extensions.SQL_IN` for a simple example.
 
 
 .. class:: AsIs(object)
@@ -290,7 +303,7 @@ details.
     *adapter* should have signature :samp:`fun({value}, {cur})` where
     *value* is the string representation returned by PostgreSQL and
     *cur* is the cursor from which data are read. In case of
-    :sql:`NULL`, *value* will be ``None``. The adapter should return the
+    :sql:`NULL`, *value* will be `!None`. The adapter should return the
     converted object.
 
     See :ref:`type-casting-from-sql-to-python` for an usage example.

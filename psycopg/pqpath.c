@@ -29,21 +29,20 @@
    connection.
 */
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <string.h>
-
 #define PSYCOPG_MODULE
-#include "psycopg/config.h"
-#include "psycopg/python.h"
 #include "psycopg/psycopg.h"
+
 #include "psycopg/pqpath.h"
 #include "psycopg/connection.h"
 #include "psycopg/cursor.h"
 #include "psycopg/green.h"
 #include "psycopg/typecast.h"
 #include "psycopg/pgtypes.h"
-#include "psycopg/pgversion.h"
+
+#include <string.h>
+
+
+extern HIDDEN PyObject *psyco_DescriptionType;
 
 
 /* Strip off the severity from a Postgres error message. */
@@ -152,7 +151,6 @@ exception_from_sqlstate(const char *sqlstate)
 static void
 pq_raise(connectionObject *conn, cursorObject *curs, PGresult *pgres)
 {
-    PyObject *pgc = (PyObject*)curs;
     PyObject *exc = NULL;
     const char *err = NULL;
     const char *err2 = NULL;
@@ -197,7 +195,7 @@ pq_raise(connectionObject *conn, cursorObject *curs, PGresult *pgres)
     /* try to remove the initial "ERROR: " part from the postgresql error */
     err2 = strip_severity(err);
 
-    psyco_set_error(exc, pgc, err2, err, code);
+    psyco_set_error(exc, curs, err2, err, code);
 }
 
 /* pq_set_critical, pq_resolve_critical - manage critical errors
@@ -279,8 +277,7 @@ pq_clear_async(connectionObject *conn)
         Dprintf("pq_clear_async: clearing PGresult at %p", pgres);
         CLEARPGRES(pgres);
     }
-    Py_XDECREF(conn->async_cursor);
-    conn->async_cursor = NULL;
+    Py_CLEAR(conn->async_cursor);
 }
 
 
@@ -611,6 +608,10 @@ pq_tpc_command_locked(connectionObject *conn, const char *cmd, const char *tid,
     Dprintf("_pq_tpc_command: pgconn = %p, command = %s",
             conn->pgconn, cmd);
 
+    conn->mark += 1;
+
+    PyEval_RestoreThread(*tstate);
+
     /* convert the xid into the postgres transaction_id and quote it. */
     if (!(etid = psycopg_escape_string((PyObject *)conn, tid, 0, NULL, NULL)))
     { goto exit; }
@@ -624,12 +625,15 @@ pq_tpc_command_locked(connectionObject *conn, const char *cmd, const char *tid,
     if (0 > PyOS_snprintf(buf, buflen, "%s %s;", cmd, etid)) { goto exit; }
 
     /* run the command and let it handle the error cases */
+    *tstate = PyEval_SaveThread();
     rv = pq_execute_command_locked(conn, buf, pgres, error, tstate);
+    PyEval_RestoreThread(*tstate);
 
 exit:
     PyMem_Free(buf);
     PyMem_Free(etid);
 
+    *tstate = PyEval_SaveThread();
     return rv;
 }
 
@@ -824,8 +828,11 @@ pq_execute(cursorObject *curs, const char *query, int async)
     }
     else {
         curs->conn->async_status = async_status;
-        Py_INCREF(curs);
-        curs->conn->async_cursor = (PyObject*)curs;
+        curs->conn->async_cursor = PyWeakref_NewRef((PyObject *)curs, NULL);
+        if (!curs->conn->async_cursor) {
+            /* weakref creation failed */
+            return -1;
+        }
     }
 
     return 1-async;
@@ -891,15 +898,19 @@ pq_get_last_result(connectionObject *conn)
       1 - result from backend (possibly data is ready)
 */
 
-static void
+static int
 _pq_fetch_tuples(cursorObject *curs)
 {
     int i, *dsize = NULL;
     int pgnfields;
     int pgbintuples;
+    int rv = -1;
+    PyObject *description = NULL;
+    PyObject *casts = NULL;
 
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(curs->conn->lock));
+    Py_END_ALLOW_THREADS;
 
     pgnfields = PQnfields(curs->pgres);
     pgbintuples = PQbinaryTuples(curs->pgres);
@@ -907,20 +918,20 @@ _pq_fetch_tuples(cursorObject *curs)
     curs->notuples = 0;
 
     /* create the tuple for description and typecasting */
-    Py_BLOCK_THREADS;
-    Py_XDECREF(curs->description);
-    Py_XDECREF(curs->casts);    
-    curs->description = PyTuple_New(pgnfields);
-    curs->casts = PyTuple_New(pgnfields);
+    Py_CLEAR(curs->description);
+    Py_CLEAR(curs->casts);
+    if (!(description = PyTuple_New(pgnfields))) { goto exit; }
+    if (!(casts = PyTuple_New(pgnfields))) { goto exit; }
     curs->columns = pgnfields;
-    Py_UNBLOCK_THREADS;
 
     /* calculate the display size for each column (cpu intensive, can be
        switched off at configuration time) */
 #ifdef PSYCOPG_DISPLAY_SIZE
-    Py_BLOCK_THREADS;
-    dsize = (int *)PyMem_Malloc(pgnfields * sizeof(int));
-    Py_UNBLOCK_THREADS;
+    if (!(dsize = PyMem_New(int, pgnfields))) {
+        PyErr_NoMemory();
+        goto exit;
+    }
+    Py_BEGIN_ALLOW_THREADS;
     if (dsize != NULL) {
         int j, len;
         for (i=0; i < pgnfields; i++) {
@@ -933,6 +944,7 @@ _pq_fetch_tuples(cursorObject *curs)
             }
         }
     }
+    Py_END_ALLOW_THREADS;
 #endif
 
     /* calculate various parameters and typecasters */
@@ -941,14 +953,11 @@ _pq_fetch_tuples(cursorObject *curs)
         int fsize = PQfsize(curs->pgres, i);
         int fmod =  PQfmod(curs->pgres, i);
 
-        PyObject *dtitem;
-        PyObject *type;
+        PyObject *dtitem = NULL;
+        PyObject *type = NULL;
         PyObject *cast = NULL;
 
-        Py_BLOCK_THREADS;
-
-        dtitem = PyTuple_New(7);
-        PyTuple_SET_ITEM(curs->description, i, dtitem);
+        if (!(dtitem = PyTuple_New(7))) { goto exit; }
 
         /* fill the right cast function by accessing three different dictionaries:
            - the per-cursor dictionary, if available (can be NULL or None)
@@ -956,21 +965,11 @@ _pq_fetch_tuples(cursorObject *curs)
            - the global dictionary (at module level)
            if we get no defined cast use the default one */
 
-        type = PyInt_FromLong(ftype);
+        if (!(type = PyInt_FromLong(ftype))) {
+            goto err_for;
+        }
         Dprintf("_pq_fetch_tuples: looking for cast %d:", ftype);
-        if (curs->string_types != NULL && curs->string_types != Py_None) {
-            cast = PyDict_GetItem(curs->string_types, type);
-            Dprintf("_pq_fetch_tuples:     per-cursor dict: %p", cast);
-        }
-        if (cast == NULL) {
-            cast = PyDict_GetItem(curs->conn->string_types, type);
-            Dprintf("_pq_fetch_tuples:     per-connection dict: %p", cast);
-        }
-        if (cast == NULL) {
-            cast = PyDict_GetItem(psyco_types, type);
-            Dprintf("_pq_fetch_tuples:     global dict: %p", cast);
-        }
-        if (cast == NULL) cast = psyco_default_cast;
+        cast = curs_get_cast(curs, type);
 
         /* else if we got binary tuples and if we got a field that
            is binary use the default cast
@@ -984,19 +983,28 @@ _pq_fetch_tuples(cursorObject *curs)
         }
 
         Dprintf("_pq_fetch_tuples: using cast at %p (%s) for type %d",
-                cast, PyString_AS_STRING(((typecastObject*)cast)->name),
+                cast, Bytes_AS_STRING(((typecastObject*)cast)->name),
                 PQftype(curs->pgres,i));
         Py_INCREF(cast);
-        PyTuple_SET_ITEM(curs->casts, i, cast);
+        PyTuple_SET_ITEM(casts, i, cast);
 
         /* 1/ fill the other fields */
-        PyTuple_SET_ITEM(dtitem, 0,
-                         PyString_FromString(PQfname(curs->pgres, i)));
+        {
+            PyObject *tmp;
+            if (!(tmp = conn_text_from_chars(
+                    curs->conn, PQfname(curs->pgres, i)))) {
+                goto err_for;
+            }
+            PyTuple_SET_ITEM(dtitem, 0, tmp);
+        }
         PyTuple_SET_ITEM(dtitem, 1, type);
+        type = NULL;
 
         /* 2/ display size is the maximum size of this field result tuples. */
         if (dsize && dsize[i] >= 0) {
-            PyTuple_SET_ITEM(dtitem, 2, PyInt_FromLong(dsize[i]));
+            PyObject *tmp;
+            if (!(tmp = PyInt_FromLong(dsize[i]))) { goto err_for; }
+            PyTuple_SET_ITEM(dtitem, 2, tmp);
         }
         else {
             Py_INCREF(Py_None);
@@ -1007,21 +1015,35 @@ _pq_fetch_tuples(cursorObject *curs)
         if (fmod > 0) fmod = fmod - sizeof(int);
         if (fsize == -1) {
             if (ftype == NUMERICOID) {
-                PyTuple_SET_ITEM(dtitem, 3,
-                                 PyInt_FromLong((fmod >> 16) & 0xFFFF));
+                PyObject *tmp;
+                if (!(tmp = PyInt_FromLong((fmod >> 16)))) { goto err_for; }
+                PyTuple_SET_ITEM(dtitem, 3, tmp);
             }
             else { /* If variable length record, return maximum size */
-                PyTuple_SET_ITEM(dtitem, 3, PyInt_FromLong(fmod));
+                PyObject *tmp;
+                if (!(tmp = PyInt_FromLong(fmod))) { goto err_for; }
+                PyTuple_SET_ITEM(dtitem, 3, tmp);
             }
         }
         else {
-            PyTuple_SET_ITEM(dtitem, 3, PyInt_FromLong(fsize));
+            PyObject *tmp;
+            if (!(tmp = PyInt_FromLong(fsize))) { goto err_for; }
+            PyTuple_SET_ITEM(dtitem, 3, tmp);
         }
 
         /* 4,5/ scale and precision */
         if (ftype == NUMERICOID) {
-            PyTuple_SET_ITEM(dtitem, 4, PyInt_FromLong((fmod >> 16) & 0xFFFF));
-            PyTuple_SET_ITEM(dtitem, 5, PyInt_FromLong(fmod & 0xFFFF));
+            PyObject *tmp;
+
+            if (!(tmp = PyInt_FromLong((fmod >> 16) & 0xFFFF))) {
+                goto err_for;
+            }
+            PyTuple_SET_ITEM(dtitem, 4, tmp);
+
+            if (!(tmp = PyInt_FromLong(fmod & 0xFFFF))) {
+                PyTuple_SET_ITEM(dtitem, 5, tmp);
+            }
+            PyTuple_SET_ITEM(dtitem, 5, tmp);
         }
         else {
             Py_INCREF(Py_None);
@@ -1033,18 +1055,40 @@ _pq_fetch_tuples(cursorObject *curs)
         /* 6/ FIXME: null_ok??? */
         Py_INCREF(Py_None);
         PyTuple_SET_ITEM(dtitem, 6, Py_None);
-    
-        Py_UNBLOCK_THREADS;    
+
+        /* Convert into a namedtuple if available */
+        if (Py_None != psyco_DescriptionType) {
+            PyObject *tmp = dtitem;
+            dtitem = PyObject_CallObject(psyco_DescriptionType, tmp);
+            Py_DECREF(tmp);
+            if (NULL == dtitem) { goto err_for; }
+        }
+
+        PyTuple_SET_ITEM(description, i, dtitem);
+        dtitem = NULL;
+
+        continue;
+
+err_for:
+        Py_XDECREF(type);
+        Py_XDECREF(dtitem);
+        goto exit;
     }
 
-    if (dsize) {
-        Py_BLOCK_THREADS;
-        PyMem_Free(dsize);
-        Py_UNBLOCK_THREADS;
-   }
-   
+    curs->description = description; description = NULL;
+    curs->casts = casts; casts = NULL;
+    rv = 0;
+
+exit:
+    PyMem_Free(dsize);
+    Py_XDECREF(description);
+    Py_XDECREF(casts);
+
+    Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_unlock(&(curs->conn->lock));
     Py_END_ALLOW_THREADS;
+
+    return rv;
 }
 
 static int
@@ -1069,19 +1113,49 @@ _pq_copy_in_v3(cursorObject *curs)
     }
 
     while (1) {
-        o = PyObject_CallFunctionObjArgs(func, size, NULL);
-        if (!(o && PyString_Check(o) && (length = PyString_GET_SIZE(o)) != -1)) {
+        if (!(o = PyObject_CallFunctionObjArgs(func, size, NULL))) {
+            Dprintf("_pq_copy_in_v3: read() failed");
             error = 1;
+            break;
         }
-        if (length == 0 || length > INT_MAX || error == 1) break;
+
+        /* a file may return unicode if implements io.TextIOBase */
+        if (PyUnicode_Check(o)) {
+            PyObject *tmp;
+            Dprintf("_pq_copy_in_v3: encoding in %s", curs->conn->codec);
+            if (!(tmp = PyUnicode_AsEncodedString(o, curs->conn->codec, NULL))) {
+                Dprintf("_pq_copy_in_v3: encoding() failed");
+                error = 1;
+                break;
+            }
+            Py_DECREF(o);
+            o = tmp;
+        }
+
+        if (!Bytes_Check(o)) {
+            Dprintf("_pq_copy_in_v3: got %s instead of bytes",
+                Py_TYPE(o)->tp_name);
+            error = 1;
+            break;
+        }
+
+        if (0 == (length = Bytes_GET_SIZE(o))) {
+            break;
+        }
+        if (length > INT_MAX) {
+            Dprintf("_pq_copy_in_v3: bad length: " FORMAT_CODE_PY_SSIZE_T,
+                length);
+            error = 1;
+            break;
+        }
 
         Py_BEGIN_ALLOW_THREADS;
-        res = PQputCopyData(curs->conn->pgconn, PyString_AS_STRING(o),
+        res = PQputCopyData(curs->conn->pgconn, Bytes_AS_STRING(o),
             /* Py_ssize_t->int cast was validated above */
             (int) length);
-        Dprintf("_pq_copy_in_v3: sent %d bytes of data; res = %d",
-            (int) length, res);
-            
+        Dprintf("_pq_copy_in_v3: sent " FORMAT_CODE_PY_SSIZE_T " bytes of data; res = %d",
+            length, res);
+
         if (res == 0) {
             /* FIXME: in theory this should not happen but adding a check
                here would be a nice idea */
@@ -1109,6 +1183,7 @@ _pq_copy_in_v3(cursorObject *curs)
     else if (error == 2)
         res = PQputCopyEnd(curs->conn->pgconn, "error in PQputCopyData() call");
     else
+        /* XXX would be nice to propagate the exeption */
         res = PQputCopyEnd(curs->conn->pgconn, "error in .read() call");
 
     IFCLEARPGRES(curs->pgres);
@@ -1143,7 +1218,9 @@ static int
 _pq_copy_out_v3(cursorObject *curs)
 {
     PyObject *tmp = NULL, *func;
+    PyObject *obj = NULL;
     int ret = -1;
+    int is_text;
 
     char *buffer;
     Py_ssize_t len;
@@ -1153,14 +1230,28 @@ _pq_copy_out_v3(cursorObject *curs)
         goto exit;
     }
 
+    /* if the file is text we must pass it unicode. */
+    if (-1 == (is_text = psycopg_is_text_file(curs->copyfile))) {
+        goto exit;
+    }
+
     while (1) {
         Py_BEGIN_ALLOW_THREADS;
         len = PQgetCopyData(curs->conn->pgconn, &buffer, 0);
         Py_END_ALLOW_THREADS;
 
         if (len > 0 && buffer) {
-            tmp = PyObject_CallFunction(func, "s#", buffer, len);
+            if (is_text) {
+                obj = PyUnicode_Decode(buffer, len, curs->conn->codec, NULL);
+            } else {
+                obj = Bytes_FromStringAndSize(buffer, len);
+            }
+
             PQfreemem(buffer);
+            if (!obj) { goto exit; }
+            tmp = PyObject_CallFunctionObjArgs(func, obj, NULL);
+            Py_DECREF(obj);
+
             if (tmp == NULL) {
                 goto exit;
             } else {
@@ -1223,7 +1314,7 @@ pq_fetch(cursorObject *curs)
 
     /* backend status message */
     Py_XDECREF(curs->pgstatus);
-    curs->pgstatus = PyString_FromString(PQcmdStatus(curs->pgres));
+    curs->pgstatus = conn_text_from_chars(curs->conn, PQcmdStatus(curs->pgres));
 
     switch(pgstatus) {
 
@@ -1260,7 +1351,7 @@ pq_fetch(cursorObject *curs)
     case PGRES_TUPLES_OK:
         Dprintf("pq_fetch: data from a SELECT (got tuples)");
         curs->rowcount = PQntuples(curs->pgres);
-        _pq_fetch_tuples(curs); ex = 0;
+        if (0 == _pq_fetch_tuples(curs)) { ex = 0; }
         /* don't clear curs->pgres, because it contains the results! */
         break;
 

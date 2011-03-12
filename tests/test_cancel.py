@@ -1,19 +1,42 @@
 #!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+# test_cancel.py - unit test for query cancellation
+#
+# Copyright (C) 2010-2011 Jan Urbański  <wulczer@wulczer.org>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
 
 import time
 import threading
-from testutils import unittest, skip_if_no_pg_sleep
 
-import tests
 import psycopg2
 import psycopg2.extensions
 from psycopg2 import extras
 
+from testconfig import dsn
+from testutils import unittest, skip_before_postgres
 
 class CancelTests(unittest.TestCase):
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         cur = self.conn.cursor()
         cur.execute('''
             CREATE TEMPORARY TABLE table1 (
@@ -27,7 +50,7 @@ class CancelTests(unittest.TestCase):
     def test_empty_cancel(self):
         self.conn.cancel()
 
-    @skip_if_no_pg_sleep('conn')
+    @skip_before_postgres(8, 2)
     def test_cancel(self):
         errors = []
 
@@ -63,9 +86,9 @@ class CancelTests(unittest.TestCase):
 
         self.assertEqual(errors, [])
 
-    @skip_if_no_pg_sleep('conn')
+    @skip_before_postgres(8, 2)
     def test_async_cancel(self):
-        async_conn = psycopg2.connect(tests.dsn, async=True)
+        async_conn = psycopg2.connect(dsn, async=True)
         self.assertRaises(psycopg2.OperationalError, async_conn.cancel)
         extras.wait_select(async_conn)
         cur = async_conn.cursor()
@@ -79,7 +102,7 @@ class CancelTests(unittest.TestCase):
         self.assertEqual(cur.fetchall(), [(1, )])
 
     def test_async_connection_cancel(self):
-        async_conn = psycopg2.connect(tests.dsn, async=True)
+        async_conn = psycopg2.connect(dsn, async=True)
         async_conn.close()
         self.assertTrue(async_conn.closed)
 

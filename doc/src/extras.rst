@@ -83,7 +83,7 @@ Real dictionary cursor
 
 .. versionadded:: 2.3
 
-These objects require `!collection.namedtuple()` to be found, so it is
+These objects require :py:func:`collections.namedtuple` to be found, so it is
 available out-of-the-box only from Python 2.6. Anyway, the namedtuple
 implementation is compatible with previous Python versions, so all you
 have to do is to `download it`__ and make it available where we
@@ -143,17 +143,66 @@ been greatly improved in capacity and usefulness with the addiction of many
 functions.  It supports GiST or GIN indexes allowing search by keys or
 key/value pairs as well as regular BTree indexes for equality, uniqueness etc.
 
-Psycopg can convert Python `dict` objects to and from |hstore| structures.
-Only dictionaries with string/unicode keys and values are supported.  `None`
-is also allowed as value.  Psycopg uses a more efficient |hstore|
+Psycopg can convert Python `!dict` objects to and from |hstore| structures.
+Only dictionaries with string/unicode keys and values are supported.  `!None`
+is also allowed as value but not as a key. Psycopg uses a more efficient |hstore|
 representation when dealing with PostgreSQL 9.0 but previous server versions
-are supportes as well.  By default the adapter/typecaster are disabled: they
+are supported as well.  By default the adapter/typecaster are disabled: they
 can be enabled using the `register_hstore()` function.
 
 .. autofunction:: register_hstore
 
 .. |hstore| replace:: :sql:`hstore`
 .. _hstore: http://www.postgresql.org/docs/9.0/static/hstore.html
+
+
+
+.. index::
+    pair: Composite types; Data types
+    pair: tuple; Adaptation
+    pair: namedtuple; Adaptation
+
+Composite types casting
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 2.4
+
+Using `register_composite()` it is possible to cast a PostgreSQL composite
+type (e.g. created with |CREATE TYPE|_ command) into a Python named tuple, or
+into a regular tuple if :py:func:`collections.namedtuple` is not found.
+
+.. |CREATE TYPE| replace:: :sql:`CREATE TYPE`
+.. _CREATE TYPE: http://www.postgresql.org/docs/9.0/static/sql-createtype.html
+
+.. doctest::
+
+    >>> cur.execute("CREATE TYPE card AS (value int, suit text);")
+    >>> psycopg2.extras.register_composite('card', cur)
+    <psycopg2.extras.CompositeCaster object at 0x...>
+
+    >>> cur.execute("select (8, 'hearts')::card")
+    >>> cur.fetchone()[0]
+    card(value=8, suit='hearts')
+
+Nested composite types are handled as expected, but the type of the composite
+components must be registered as well.
+
+.. doctest::
+
+    >>> cur.execute("CREATE TYPE card_back AS (face card, back text);")
+    >>> psycopg2.extras.register_composite('card_back', cur)
+    <psycopg2.extras.CompositeCaster object at 0x...>
+
+    >>> cur.execute("select ((8, 'hearts'), 'blue')::card_back")
+    >>> cur.fetchone()[0]
+    card_back(face=card(value=8, suit='hearts'), back='blue')
+
+Adaptation from Python tuples to composite types is automatic instead and
+requires no adapter registration.
+
+.. autofunction:: register_composite
+
+.. autoclass:: CompositeCaster
 
 
 

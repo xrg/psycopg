@@ -19,7 +19,7 @@
 #   make check  # this requires setting up a test database with the correct user
 
 PYTHON := python$(PYTHON_VERSION)
-PYTHON_VERSION ?= $(shell $(PYTHON) -c 'import sys; print "%d.%d" % sys.version_info[:2]')
+PYTHON_VERSION ?= $(shell $(PYTHON) -c 'import sys; print ("%d.%d" % sys.version_info[:2])')
 BUILD_DIR = $(shell pwd)/build/lib.$(PYTHON_VERSION)
 ENV_DIR = $(shell pwd)/env/py-$(PYTHON_VERSION)
 ENV_BIN = $(ENV_DIR)/bin
@@ -27,12 +27,14 @@ ENV_LIB = $(ENV_DIR)/lib
 
 SOURCE_C := $(wildcard psycopg/*.c psycopg/*.h)
 SOURCE_PY := $(wildcard lib/*.py)
+SOURCE_TESTS := $(wildcard tests/*.py)
 SOURCE_DOC := $(wildcard doc/src/*.rst)
-SOURCE := $(SOURCE_C) $(SOURCE_PY) $(SOURCE_DOC)
+SOURCE := $(SOURCE_C) $(SOURCE_PY) $(SOURCE_TESTS) $(SOURCE_DOC)
 
 PACKAGE := $(BUILD_DIR)/psycopg2
 PLATLIB := $(PACKAGE)/_psycopg.so
-PURELIB := $(patsubst lib/%,$(PACKAGE)/%,$(SOURCE_PY))
+PURELIB := $(patsubst lib/%,$(PACKAGE)/%,$(SOURCE_PY)) \
+           $(patsubst tests/%,$(PACKAGE)/tests/%,$(SOURCE_TESTS))
 
 BUILD_OPT := --build-lib=$(BUILD_DIR)
 BUILD_EXT_OPT := --build-lib=$(BUILD_DIR)
@@ -48,11 +50,11 @@ SDIST := dist/psycopg2-$(VERSION).tar.gz
 EASY_INSTALL = PYTHONPATH=$(ENV_LIB) $(ENV_BIN)/easy_install-$(PYTHON_VERSION) -d $(ENV_LIB) -s $(ENV_BIN)
 EZ_SETUP = $(ENV_BIN)/ez_setup.py
 
-.PHONY: env check runtests clean
+.PHONY: env check clean
 
 default: package
 
-all: package runtests sdist
+all: package sdist
 
 package: $(PLATLIB) $(PURELIB)
 
@@ -85,7 +87,7 @@ ez_setup:
 	wget -O $(EZ_SETUP) http://peak.telecommunity.com/dist/ez_setup.py
 
 check:
-	PYTHONPATH=$(BUILD_DIR):.:$(PYTHONPATH) $(PYTHON) tests/__init__.py --verbose
+	PYTHONPATH=$(BUILD_DIR):$(PYTHONPATH) $(PYTHON) -c "from psycopg2 import tests; tests.unittest.main(defaultTest='tests.test_suite')" --verbose
 
 testdb:
 	@echo "* Creating $(TESTDB)"
@@ -104,8 +106,12 @@ $(PLATLIB): $(SOURCE_C)
 	$(PYTHON) setup.py build_ext $(BUILD_EXT_OPT)
 
 $(PACKAGE)/%.py: lib/%.py
-	$(PYTHON) setup.py build $(BUILD_OPT)
+	$(PYTHON) setup.py build_py $(BUILD_OPT)
+	touch $@
 
+$(PACKAGE)/tests/%.py: tests/%.py
+	$(PYTHON) setup.py build_py $(BUILD_OPT)
+	touch $@
 
 $(SDIST): docs MANIFEST $(SOURCE)
 	$(PYTHON) setup.py sdist $(SDIST_OPT)

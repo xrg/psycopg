@@ -26,7 +26,6 @@
 #ifndef PSYCOPG_PQPATH_H
 #define PSYCOPG_PQPATH_H 1
 
-#include "psycopg/config.h"
 #include "psycopg/cursor.h"
 #include "psycopg/connection.h"
 
@@ -45,6 +44,8 @@ HIDDEN int pq_commit(connectionObject *conn);
 HIDDEN int pq_abort_locked(connectionObject *conn, PGresult **pgres,
                            char **error, PyThreadState **tstate);
 HIDDEN int pq_abort(connectionObject *conn);
+HIDDEN int pq_reset_locked(connectionObject *conn, PGresult **pgres,
+                            char **error, PyThreadState **tstate);
 HIDDEN int pq_reset(connectionObject *conn);
 HIDDEN int pq_tpc_command_locked(connectionObject *conn,
                                  const char *cmd, const char *tid,

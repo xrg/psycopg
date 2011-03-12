@@ -1,12 +1,37 @@
 #!/usr/bin/env python
+
+# test_lobject.py - unit test for large objects support
+#
+# Copyright (C) 2008-2011 James Henstridge  <james@jamesh.id.au>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
+
 import os
 import shutil
 import tempfile
-from testutils import unittest, decorate_all_tests
+from testutils import unittest, decorate_all_tests, skip_if_tpc_disabled
 
 import psycopg2
 import psycopg2.extensions
-import tests
+from psycopg2.extensions import b
+from testconfig import dsn, green
+from testutils import unittest, decorate_all_tests
 
 def skip_if_no_lo(f):
     def skip_if_no_lo_(self):
@@ -19,7 +44,7 @@ def skip_if_no_lo(f):
 
 def skip_if_green(f):
     def skip_if_green_(self):
-        if tests.green:
+        if green:
             return self.skipTest("libpq doesn't support LO in async mode")
         else:
             return f(self)
@@ -30,13 +55,17 @@ def skip_if_green(f):
 class LargeObjectMixin(object):
     # doesn't derive from TestCase to avoid repeating tests twice.
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = self.connect()
         self.lo_oid = None
         self.tmpdir = None
 
     def tearDown(self):
         if self.tmpdir:
             shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+        if self.conn.closed:
+            return
+
         if self.lo_oid is not None:
             self.conn.rollback()
             try:
@@ -47,12 +76,15 @@ class LargeObjectMixin(object):
                 lo.unlink()
         self.conn.close()
 
+    def connect(self):
+        return psycopg2.connect(dsn)
+
 
 class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
     def test_create(self):
         lo = self.conn.lobject()
         self.assertNotEqual(lo, None)
-        self.assertEqual(lo.mode, "w")
+        self.assertEqual(lo.mode[0], "w")
 
     def test_open_non_existent(self):
         # By creating then removing a large object, we get an Oid that
@@ -66,13 +98,13 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
         lo2 = self.conn.lobject(lo.oid)
         self.assertNotEqual(lo2, None)
         self.assertEqual(lo2.oid, lo.oid)
-        self.assertEqual(lo2.mode, "r")
+        self.assertEqual(lo2.mode[0], "r")
 
     def test_open_for_write(self):
         lo = self.conn.lobject()
         lo2 = self.conn.lobject(lo.oid, "w")
-        self.assertEqual(lo2.mode, "w")
-        lo2.write("some data")
+        self.assertEqual(lo2.mode[0], "w")
+        lo2.write(b("some data"))
 
     def test_open_mode_n(self):
         # Openning an object in mode "n" gives us a closed lobject.
@@ -82,6 +114,11 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
         lo2 = self.conn.lobject(lo.oid, "n")
         self.assertEqual(lo2.oid, lo.oid)
         self.assertEqual(lo2.closed, True)
+
+    def test_close_connection_gone(self):
+        lo = self.conn.lobject()
+        self.conn.close()
+        lo.close()
 
     def test_create_with_oid(self):
         # Create and delete a large object to get an unused Oid.
@@ -103,7 +140,7 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         filename = os.path.join(self.tmpdir, "data.txt")
         fp = open(filename, "wb")
-        fp.write("some data")
+        fp.write(b("some data"))
         fp.close()
 
         lo = self.conn.lobject(0, "r", 0, filename)
@@ -117,7 +154,7 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
 
     def test_write(self):
         lo = self.conn.lobject()
-        self.assertEqual(lo.write("some data"), len("some data"))
+        self.assertEqual(lo.write(b("some data")), len("some data"))
 
     def test_write_large(self):
         lo = self.conn.lobject()
@@ -126,26 +163,54 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
 
     def test_read(self):
         lo = self.conn.lobject()
-        length = lo.write("some data")
+        length = lo.write(b("some data"))
         lo.close()
 
         lo = self.conn.lobject(lo.oid)
-        self.assertEqual(lo.read(4), "some")
+        x = lo.read(4)
+        self.assertEqual(type(x), type(''))
+        self.assertEqual(x, "some")
         self.assertEqual(lo.read(), " data")
+
+    def test_read_binary(self):
+        lo = self.conn.lobject()
+        length = lo.write(b("some data"))
+        lo.close()
+
+        lo = self.conn.lobject(lo.oid, "rb")
+        x = lo.read(4)
+        self.assertEqual(type(x), type(b('')))
+        self.assertEqual(x, b("some"))
+        self.assertEqual(lo.read(), b(" data"))
+
+    def test_read_text(self):
+        lo = self.conn.lobject()
+        snowman = u"\u2603"
+        length = lo.write(u"some data " + snowman)
+        lo.close()
+
+        lo = self.conn.lobject(lo.oid, "rt")
+        x = lo.read(4)
+        self.assertEqual(type(x), type(u''))
+        self.assertEqual(x, u"some")
+        self.assertEqual(lo.read(), u" data " + snowman)
 
     def test_read_large(self):
         lo = self.conn.lobject()
         data = "data" * 1000000
-        length = lo.write("some"+data)
+        length = lo.write("some" + data)
         lo.close()
 
         lo = self.conn.lobject(lo.oid)
         self.assertEqual(lo.read(4), "some")
-        self.assertEqual(lo.read(), data)
+        data1 = lo.read()
+        # avoid dumping megacraps in the console in case of error
+        self.assert_(data == data1,
+            "%r... != %r..." % (data[:100], data1[:100]))
 
     def test_seek_tell(self):
         lo = self.conn.lobject()
-        length = lo.write("some data")
+        length = lo.write(b("some data"))
         self.assertEqual(lo.tell(), length)
         lo.close()
         lo = self.conn.lobject(lo.oid)
@@ -175,13 +240,17 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
 
     def test_export(self):
         lo = self.conn.lobject()
-        lo.write("some data")
+        lo.write(b("some data"))
 
         self.tmpdir = tempfile.mkdtemp()
         filename = os.path.join(self.tmpdir, "data.txt")
         lo.export(filename)
         self.assertTrue(os.path.exists(filename))
-        self.assertEqual(open(filename, "rb").read(), "some data")
+        f = open(filename, "rb")
+        try:
+            self.assertEqual(f.read(), b("some data"))
+        finally:
+            f.close()
 
     def test_close_twice(self):
         lo = self.conn.lobject()
@@ -191,7 +260,7 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
     def test_write_after_close(self):
         lo = self.conn.lobject()
         lo.close()
-        self.assertRaises(psycopg2.InterfaceError, lo.write, "some data")
+        self.assertRaises(psycopg2.InterfaceError, lo.write, b("some data"))
 
     def test_read_after_close(self):
         lo = self.conn.lobject()
@@ -216,14 +285,18 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
 
     def test_export_after_close(self):
         lo = self.conn.lobject()
-        lo.write("some data")
+        lo.write(b("some data"))
         lo.close()
 
         self.tmpdir = tempfile.mkdtemp()
         filename = os.path.join(self.tmpdir, "data.txt")
         lo.export(filename)
         self.assertTrue(os.path.exists(filename))
-        self.assertEqual(open(filename, "rb").read(), "some data")
+        f = open(filename, "rb")
+        try:
+            self.assertEqual(f.read(), b("some data"))
+        finally:
+            f.close()
 
     def test_close_after_commit(self):
         lo = self.conn.lobject()
@@ -238,7 +311,7 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
         self.lo_oid = lo.oid
         self.conn.commit()
 
-        self.assertRaises(psycopg2.ProgrammingError, lo.write, "some data")
+        self.assertRaises(psycopg2.ProgrammingError, lo.write, b("some data"))
 
     def test_read_after_commit(self):
         lo = self.conn.lobject()
@@ -271,14 +344,40 @@ class LargeObjectTests(LargeObjectMixin, unittest.TestCase):
 
     def test_export_after_commit(self):
         lo = self.conn.lobject()
-        lo.write("some data")
+        lo.write(b("some data"))
         self.conn.commit()
 
         self.tmpdir = tempfile.mkdtemp()
         filename = os.path.join(self.tmpdir, "data.txt")
         lo.export(filename)
         self.assertTrue(os.path.exists(filename))
-        self.assertEqual(open(filename, "rb").read(), "some data")
+        f = open(filename, "rb")
+        try:
+            self.assertEqual(f.read(), b("some data"))
+        finally:
+            f.close()
+
+    @skip_if_tpc_disabled
+    def test_read_after_tpc_commit(self):
+        self.conn.tpc_begin('test_lobject')
+        lo = self.conn.lobject()
+        self.lo_oid = lo.oid
+        self.conn.tpc_commit()
+
+        self.assertRaises(psycopg2.ProgrammingError, lo.read, 5)
+
+    @skip_if_tpc_disabled
+    def test_read_after_tpc_prepare(self):
+        self.conn.tpc_begin('test_lobject')
+        lo = self.conn.lobject()
+        self.lo_oid = lo.oid
+        self.conn.tpc_prepare()
+
+        try:
+            self.assertRaises(psycopg2.ProgrammingError, lo.read, 5)
+        finally:
+            self.conn.tpc_commit()
+
 
 decorate_all_tests(LargeObjectTests, skip_if_no_lo)
 decorate_all_tests(LargeObjectTests, skip_if_green)
@@ -300,7 +399,7 @@ def skip_if_no_truncate(f):
 class LargeObjectTruncateTests(LargeObjectMixin, unittest.TestCase):
     def test_truncate(self):
         lo = self.conn.lobject()
-        lo.write("some data")
+        lo.write(b("some data"))
         lo.close()
 
         lo = self.conn.lobject(lo.oid, "w")
@@ -309,17 +408,17 @@ class LargeObjectTruncateTests(LargeObjectMixin, unittest.TestCase):
         # seek position unchanged
         self.assertEqual(lo.tell(), 0)
         # data truncated
-        self.assertEqual(lo.read(), "some")
+        self.assertEqual(lo.read(), b("some"))
 
         lo.truncate(6)
         lo.seek(0)
         # large object extended with zeroes
-        self.assertEqual(lo.read(), "some\x00\x00")
+        self.assertEqual(lo.read(), b("some\x00\x00"))
 
         lo.truncate()
         lo.seek(0)
         # large object empty
-        self.assertEqual(lo.read(), "")
+        self.assertEqual(lo.read(), b(""))
 
     def test_truncate_after_close(self):
         lo = self.conn.lobject()

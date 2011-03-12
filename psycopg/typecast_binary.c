@@ -25,7 +25,6 @@
 
 #include "typecast_binary.h"
 
-#include <libpq-fe.h>
 #include <stdlib.h>
 
 
@@ -42,7 +41,7 @@ chunk_dealloc(chunkObject *self)
         self->base, self->len
       );
     PQfreemem(self->base);
-    self->ob_type->tp_free((PyObject *) self);
+    Py_TYPE(self)->tp_free((PyObject *)self);
 }
 
 static PyObject *
@@ -54,6 +53,9 @@ chunk_repr(chunkObject *self)
       );
 }
 
+#if PY_MAJOR_VERSION < 3
+
+/* XXX support 3.0 buffer protocol */
 static Py_ssize_t
 chunk_getreadbuffer(chunkObject *self, Py_ssize_t segment, void **ptr)
 {
@@ -83,11 +85,26 @@ static PyBufferProcs chunk_as_buffer =
     (charbufferproc) NULL
 };
 
+#else
+
+/* 3.0 buffer interface */
+int chunk_getbuffer(PyObject *_self, Py_buffer *view, int flags)
+{
+    chunkObject *self = (chunkObject*)_self;
+    return PyBuffer_FillInfo(view, _self, self->base, self->len, 1, flags);
+}
+static PyBufferProcs chunk_as_buffer =
+{
+    chunk_getbuffer,
+    NULL,
+};
+
+#endif
+
 #define chunk_doc "memory chunk"
 
 PyTypeObject chunkType = {
-    PyObject_HEAD_INIT(NULL)
-    0,                          /* ob_size */
+    PyVarObject_HEAD_INIT(NULL, 0)
     "psycopg2._psycopg.chunk",   /* tp_name */
     sizeof(chunkObject),        /* tp_basicsize */
     0,                          /* tp_itemsize */
@@ -149,6 +166,19 @@ typecast_BINARY_cast(const char *s, Py_ssize_t l, PyObject *curs)
       goto fail;
     }
 
+    /* Check the escaping was successful */
+    if (s[0] == '\\' && s[1] == 'x'     /* input encoded in hex format */
+        && str[0] == 'x'                /* output resulted in an 'x' */
+        && s[2] != '7' && s[3] != '8')  /* input wasn't really an x (0x78) */
+    {
+        PyErr_SetString(InterfaceError,
+            "can't receive bytea data from server >= 9.0 with the current "
+            "libpq client library: please update the libpq to at least 9.0 "
+            "or set bytea_output to 'escape' in the server config "
+            "or with a query");
+        goto fail;
+    }
+
     chunk = (chunkObject *) PyObject_New(chunkObject, &chunkType);
     if (chunk == NULL) goto fail;
 
@@ -158,8 +188,13 @@ typecast_BINARY_cast(const char *s, Py_ssize_t l, PyObject *curs)
 
     /* size_t->Py_ssize_t cast was validated above: */
     chunk->len = (Py_ssize_t) len;
+#if PY_MAJOR_VERSION < 3
     if ((res = PyBuffer_FromObject((PyObject *)chunk, 0, chunk->len)) == NULL)
         goto fail;
+#else
+    if ((res = PyMemoryView_FromObject((PyObject*)chunk)) == NULL)
+        goto fail;
+#endif
     /* PyBuffer_FromObject() created a new reference.  We'll release our
      * reference held in 'chunk' in the 'cleanup' clause. */
 
@@ -179,10 +214,8 @@ typecast_BINARY_cast(const char *s, Py_ssize_t l, PyObject *curs)
           /* str's mem was allocated by PQunescapeBytea; must use PQfreemem: */
           PQfreemem(str);
       }
-      if (buffer != NULL) {
-          /* We allocated buffer with PyMem_Malloc; must use PyMem_Free: */
-          PyMem_Free(buffer);
-      }
+      /* We allocated buffer with PyMem_Malloc; must use PyMem_Free: */
+      PyMem_Free(buffer);
 
       return res;
 }

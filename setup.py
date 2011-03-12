@@ -31,6 +31,7 @@ Intended Audience :: Developers
 License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)
 License :: OSI Approved :: Zope Public License
 Programming Language :: Python
+Programming Language :: Python :: 3
 Programming Language :: C
 Programming Language :: SQL
 Topic :: Database
@@ -41,39 +42,63 @@ Operating System :: Microsoft :: Windows
 Operating System :: Unix
 """
 
+# Note: The setup.py must be compatible with both Python 2 and 3
+
 import os
 import os.path
 import sys
 import re
 import subprocess
-import ConfigParser
 from distutils.core import setup, Extension
 from distutils.errors import DistutilsFileError
 from distutils.command.build_ext import build_ext
 from distutils.sysconfig import get_python_inc
 from distutils.ccompiler import get_default_compiler
+from distutils.dep_util import newer_group
+from distutils.util import get_platform
+try:
+    from distutils.msvc9compiler import MSVCCompiler
+except ImportError:
+    MSVCCompiler = None
+try:
+    from distutils.command.build_py import build_py_2to3 as build_py
+except ImportError:
+    from distutils.command.build_py import build_py
+else:
+    # Configure distutils to run our custom 2to3 fixers as well
+    from lib2to3.refactor import get_fixers_from_package
+    build_py.fixer_names = get_fixers_from_package('lib2to3.fixes')
+    build_py.fixer_names.append('fix_b')
+    sys.path.insert(0, 'scripts')
+
+try:
+    import configparser
+except ImportError:
+    import ConfigParser as configparser
 
 # Take a look at http://www.python.org/dev/peps/pep-0386/
 # for a consistent versioning pattern.
 
-PSYCOPG_VERSION = '2.3.2'
+PSYCOPG_VERSION = '2.4'
 
 version_flags   = ['dt', 'dec']
 
 PLATFORM_IS_WINDOWS = sys.platform.lower().startswith('win')
 
-def get_pg_config(kind, pg_config="pg_config"):
+def get_pg_config(kind, pg_config):
     try:
       p = subprocess.Popen([pg_config, "--" + kind],
                            stdin=subprocess.PIPE,
                            stdout=subprocess.PIPE,
                            stderr=subprocess.PIPE)
     except OSError:
-        raise Warning("Unable to find 'pg_config' file")
+        raise Warning("Unable to find 'pg_config' file in '%s'" % pg_config)
     p.stdin.close()
     r = p.stdout.readline().strip()
     if not r:
         raise Warning(p.stderr.readline())
+    if not isinstance(r, str):
+        r = r.decode('ascii')
     return r
 
 class psycopg_build_ext(build_ext):
@@ -101,8 +126,6 @@ class psycopg_build_ext(build_ext):
     boolean_options = build_ext.boolean_options[:]
     boolean_options.extend(('use-pydatetime', 'have-ssl', 'static-libpq'))
 
-    DEFAULT_PG_CONFIG = "pg_config"
-
     def initialize_options(self):
         build_ext.initialize_options(self)
         self.use_pg_dll = 1
@@ -110,8 +133,7 @@ class psycopg_build_ext(build_ext):
         self.mx_include_dir = None
         self.use_pydatetime = 1
         self.have_ssl = have_ssl
-
-        self.pg_config = self.autodetect_pg_config_path()
+        self.pg_config = None
 
     def get_compiler(self):
         """Return the name of the C compiler used to compile extensions.
@@ -133,6 +155,28 @@ class psycopg_build_ext(build_ext):
     def get_pg_config(self, kind):
         return get_pg_config(kind, self.pg_config)
 
+    def get_export_symbols(self, ext):
+        # Fix MSVC seeing two of the same export symbols.
+        if self.get_compiler().lower().startswith('msvc'):
+            return []
+        else:
+            return build_ext.get_export_symbols(self, ext)
+
+    def build_extension(self, ext):
+        build_ext.build_extension(self, ext)
+
+        # For Python versions that use MSVC compiler 2008, re-insert the
+        #  manifest into the resulting .pyd file.
+        if MSVCCompiler and isinstance(self.compiler, MSVCCompiler):
+            platform = get_platform()
+            # Default to the x86 manifest
+            manifest = '_psycopg.vc9.x86.manifest'
+            if platform == 'win-amd64':
+                manifest = '_psycopg.vc9.amd64.manifest'
+            self.compiler.spawn(['mt.exe', '-nologo', '-manifest',
+                os.path.join('psycopg', manifest),
+                '-outputresource:%s;2' % (os.path.join(self.build_lib, 'psycopg2', '_psycopg.pyd'))])
+
     def finalize_win32(self):
         """Finalize build system configuration on win32 platform."""
         import struct
@@ -144,13 +188,7 @@ class psycopg_build_ext(build_ext):
         compiler_name = self.get_compiler().lower()
         compiler_is_msvc = compiler_name.startswith('msvc')
         compiler_is_mingw = compiler_name.startswith('mingw')
-        if compiler_is_msvc:
-            # If we're using MSVC 7.1 or later on a 32-bit platform, add the
-            # /Wp64 option to generate warnings about Win64 portability
-            # problems.
-            if sysVer >= (2,4) and struct.calcsize('P') == 4:
-                extra_compiler_args.append('/Wp64')
-        elif compiler_is_mingw:
+        if compiler_is_mingw:
             # Default MinGW compilation of Python extensions on Windows uses
             # only -O:
             extra_compiler_args.append('-O3')
@@ -209,6 +247,20 @@ class psycopg_build_ext(build_ext):
     def finalize_options(self):
         """Complete the build system configuation."""
         build_ext.finalize_options(self)
+        if self.pg_config is None:
+            self.pg_config = self.autodetect_pg_config_path()
+        if self.pg_config is None:
+            sys.stderr.write("""\
+Error: pg_config executable not found.
+
+Please add the directory containing pg_config to the PATH
+or specify the full executable path with the option:
+
+    python setup.py build_ext --pg-config /path/to/pg_config build ...
+
+or with the pg_config option in 'setup.cfg'.
+""")
+            sys.exit(1)
 
         self.include_dirs.append(".")
         if static_libpq:
@@ -244,23 +296,26 @@ class psycopg_build_ext(build_ext):
 
             define_macros.append(("PG_VERSION_HEX", "0x%02X%02X%02X" %
                                   (int(pgmajor), int(pgminor), int(pgpatch))))
-        except Warning, w:
-            if self.pg_config == self.DEFAULT_PG_CONFIG:
-                sys.stderr.write("Warning: %s" % str(w))
-            else:
-                sys.stderr.write("Error: %s" % str(w))
-                sys.exit(1)
+        except Warning:
+            w = sys.exc_info()[1] # work around py 2/3 different syntax
+            sys.stderr.write("Error: %s\n" % w)
+            sys.exit(1)
 
         if hasattr(self, "finalize_" + sys.platform):
             getattr(self, "finalize_" + sys.platform)()
 
     def autodetect_pg_config_path(self):
-        res = None
-
         if PLATFORM_IS_WINDOWS:
-            res = self.autodetect_pg_config_path_windows()
+            return self.autodetect_pg_config_path_windows()
+        else:
+            return self.autodetect_pg_config_path_posix()
 
-        return res or self.DEFAULT_PG_CONFIG
+    def autodetect_pg_config_path_posix(self):
+        exename = 'pg_config'
+        for dir in os.environ['PATH'].split(os.pathsep):
+            fn = os.path.join(dir, exename)
+            if os.path.isfile(fn):
+                return fn
 
     def autodetect_pg_config_path_windows(self):
         # Find the first PostgreSQL installation listed in the registry and
@@ -280,21 +335,24 @@ class psycopg_build_ext(build_ext):
         for settingName in ('pg_config', 'include_dirs', 'library_dirs'):
             try:
                 val = parser.get('build_ext', settingName)
-            except ConfigParser.NoOptionError:
+            except configparser.NoOptionError:
                 pass
             else:
                 if val.strip() != '':
                     return None
         # end of guard conditions
 
-        import _winreg
+        try:
+            import winreg
+        except ImportError:
+            import _winreg as winreg
 
         pg_inst_base_dir = None
         pg_config_path = None
 
-        reg = _winreg.ConnectRegistry(None, _winreg.HKEY_LOCAL_MACHINE)
+        reg = winreg.ConnectRegistry(None, winreg.HKEY_LOCAL_MACHINE)
         try:
-            pg_inst_list_key = _winreg.OpenKey(reg,
+            pg_inst_list_key = winreg.OpenKey(reg,
                 'SOFTWARE\\PostgreSQL\\Installations'
               )
         except EnvironmentError:
@@ -304,23 +362,23 @@ class psycopg_build_ext(build_ext):
             try:
                 # Determine the name of the first subkey, if any:
                 try:
-                    first_sub_key_name = _winreg.EnumKey(pg_inst_list_key, 0)
+                    first_sub_key_name = winreg.EnumKey(pg_inst_list_key, 0)
                 except EnvironmentError:
                     first_sub_key_name = None
 
                 if first_sub_key_name is not None:
-                    pg_first_inst_key = _winreg.OpenKey(reg,
+                    pg_first_inst_key = winreg.OpenKey(reg,
                         'SOFTWARE\\PostgreSQL\\Installations\\'
                         + first_sub_key_name
                       )
                     try:
-                        pg_inst_base_dir = _winreg.QueryValueEx(
+                        pg_inst_base_dir = winreg.QueryValueEx(
                             pg_first_inst_key, 'Base Directory'
                           )[0]
                     finally:
-                        _winreg.CloseKey(pg_first_inst_key)
+                        winreg.CloseKey(pg_first_inst_key)
             finally:
-                _winreg.CloseKey(pg_inst_list_key)
+                winreg.CloseKey(pg_inst_list_key)
 
         if pg_inst_base_dir and os.path.exists(pg_inst_base_dir):
             pg_config_path = os.path.join(pg_inst_base_dir, 'bin',
@@ -345,16 +403,39 @@ ext = [] ; data_files = []
 # sources
 
 sources = [
-    'psycopgmodule.c', 'pqpath.c',  'typecast.c',
-    'microprotocols.c', 'microprotocols_proto.c',
-    'connection_type.c', 'connection_int.c', 'cursor_type.c', 'cursor_int.c',
-    'lobject_type.c', 'lobject_int.c', 'notify_type.c', 'xid_type.c',
-    'adapter_qstring.c', 'adapter_pboolean.c', 'adapter_binary.c',
-    'adapter_asis.c', 'adapter_list.c', 'adapter_datetime.c',
-    'adapter_pfloat.c', 'adapter_pdecimal.c',
-    'green.c', 'utils.c']
+    'psycopgmodule.c',
+    'green.c', 'pqpath.c', 'utils.c', 'bytes_format.c',
 
-parser = ConfigParser.ConfigParser()
+    'connection_int.c', 'connection_type.c',
+    'cursor_int.c', 'cursor_type.c',
+    'lobject_int.c', 'lobject_type.c',
+    'notify_type.c', 'xid_type.c',
+
+    'adapter_asis.c', 'adapter_binary.c', 'adapter_datetime.c',
+    'adapter_list.c', 'adapter_pboolean.c', 'adapter_pdecimal.c',
+    'adapter_pfloat.c', 'adapter_qstring.c',
+    'microprotocols.c', 'microprotocols_proto.c',
+    'typecast.c',
+]
+
+depends = [
+    # headers
+    'config.h', 'pgtypes.h', 'psycopg.h', 'python.h',
+    'connection.h', 'cursor.h', 'green.h', 'lobject.h',
+    'notify.h', 'pqpath.h', 'xid.h',
+
+    'adapter_asis.h', 'adapter_binary.h', 'adapter_datetime.h',
+    'adapter_list.h', 'adapter_pboolean.h', 'adapter_pdecimal.h',
+    'adapter_pfloat.h', 'adapter_qstring.h',
+    'microprotocols.h', 'microprotocols_proto.h',
+    'typecast.h', 'typecast_binary.h',
+
+    # included sources
+    'typecast_array.c', 'typecast_basic.c', 'typecast_binary.c',
+    'typecast_builtins.c', 'typecast_datetime.c',
+]
+
+parser = configparser.ConfigParser()
 parser.read('setup.cfg')
 
 # Choose a datetime module
@@ -371,6 +452,7 @@ if os.path.exists(mxincludedir):
     include_dirs.append(mxincludedir)
     define_macros.append(('HAVE_MXDATETIME','1'))
     sources.append('adapter_mxdatetime.c')
+    depends.extend(['adapter_mxdatetime.h', 'typecast_mxdatetime.c'])
     have_mxdatetime = True
     version_flags.append('mx')
 
@@ -417,12 +499,23 @@ else:
 
 # build the extension
 
-sources = map(lambda x: os.path.join('psycopg', x), sources)
+sources = [ os.path.join('psycopg', x) for x in sources]
+depends = [ os.path.join('psycopg', x) for x in depends]
 
 ext.append(Extension("psycopg2._psycopg", sources,
                      define_macros=define_macros,
                      include_dirs=include_dirs,
+                     depends=depends,
                      undef_macros=[]))
+
+# Compute the direct download url.
+# Note that the current package installation programs are stupidly intelligent
+# and will try to install a beta if they find a link in the homepage instead of
+# using these pretty metadata. But that's their problem, not ours.
+download_url = (
+    "http://initd.org/psycopg/tarballs/PSYCOPG-%s/psycopg2-%s.tar.gz"
+    % ('-'.join(PSYCOPG_VERSION.split('.')[:2]), PSYCOPG_VERSION))
+
 setup(name="psycopg2",
       version=PSYCOPG_VERSION,
       maintainer="Federico Di Gregorio",
@@ -430,15 +523,17 @@ setup(name="psycopg2",
       author="Federico Di Gregorio",
       author_email="fog@initd.org",
       url="http://initd.org/psycopg/",
-      download_url = "http://initd.org/psycopg/download/",
+      download_url = download_url,
       license="GPL with exceptions or ZPL",
       platforms = ["any"],
       description=__doc__.split("\n")[0],
       long_description="\n".join(__doc__.split("\n")[2:]),
-      classifiers=filter(None, classifiers.split("\n")),
+      classifiers=[x for x in classifiers.split("\n") if x],
       data_files=data_files,
       package_dir={'psycopg2':'lib', 'psycopg2.tests': 'tests'},
       packages=['psycopg2', 'psycopg2.tests'],
-      cmdclass={ 'build_ext': psycopg_build_ext },
+      cmdclass={
+          'build_ext': psycopg_build_ext,
+          'build_py': build_py, },
       ext_modules=ext)
 

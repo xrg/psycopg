@@ -23,21 +23,15 @@
  * License for more details.
  */
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <structmember.h>
-#include <stringobject.h>
-
-#include <libpq-fe.h>
-#include <string.h>
-
 #define PSYCOPG_MODULE
-#include "psycopg/config.h"
-#include "psycopg/python.h"
 #include "psycopg/psycopg.h"
-#include "psycopg/connection.h"
+
 #include "psycopg/adapter_binary.h"
 #include "psycopg/microprotocols_proto.h"
+#include "psycopg/connection.h"
+
+#include <string.h>
+
 
 /** the quoting code */
 
@@ -53,65 +47,103 @@ binary_escape(unsigned char *from, size_t from_length,
         return PQescapeBytea(from, from_length, to_length);
 }
 
+#define HAS_BUFFER (PY_MAJOR_VERSION < 3)
+#define HAS_MEMORYVIEW (PY_MAJOR_VERSION > 2 || PY_MINOR_VERSION >= 6)
+
 /* binary_quote - do the quote process on plain and unicode strings */
 
 static PyObject *
 binary_quote(binaryObject *self)
 {
-    char *to;
-    const char *buffer;
+    char *to = NULL;
+    const char *buffer = NULL;
     Py_ssize_t buffer_len;
     size_t len = 0;
+    PyObject *rv = NULL;
+#if HAS_MEMORYVIEW
+    Py_buffer view;
+    int got_view = 0;
+#endif
 
     /* if we got a plain string or a buffer we escape it and save the buffer */
-    if (PyString_Check(self->wrapped) || PyBuffer_Check(self->wrapped)) {
-        /* escape and build quoted buffer */
-        if (PyObject_AsReadBuffer(self->wrapped, (const void **)&buffer,
-                                  &buffer_len) < 0)
-            return NULL;
 
-        to = (char *)binary_escape((unsigned char*)buffer, (size_t) buffer_len,
-            &len, self->conn ? ((connectionObject*)self->conn)->pgconn : NULL);
-        if (to == NULL) {
-            PyErr_NoMemory();
-            return NULL;
+#if HAS_MEMORYVIEW
+    if (PyObject_CheckBuffer(self->wrapped)) {
+        if (0 > PyObject_GetBuffer(self->wrapped, &view, PyBUF_CONTIG_RO)) {
+            goto exit;
         }
+        got_view = 1;
+        buffer = (const char *)(view.buf);
+        buffer_len = view.len;
+    }
+#endif
 
-        if (len > 0)
-            self->buffer = PyString_FromFormat(
-                (self->conn && ((connectionObject*)self->conn)->equote)
-                    ? "E'%s'::bytea" : "'%s'::bytea" , to);
-        else
-            self->buffer = PyString_FromString("''::bytea");
+#if HAS_BUFFER
+    if (!buffer && (Bytes_Check(self->wrapped) || PyBuffer_Check(self->wrapped))) {
+        if (PyObject_AsReadBuffer(self->wrapped, (const void **)&buffer,
+                                  &buffer_len) < 0) {
+            goto exit;
+        }
+    }
+#endif
 
-        PQfreemem(to);
+    if (!buffer) {
+        goto exit;
     }
 
-    /* if the wrapped object is not a string or a buffer, this is an error */
-    else {
-        PyErr_SetString(PyExc_TypeError, "can't escape non-string object");
-        return NULL;
+    /* escape and build quoted buffer */
+
+    to = (char *)binary_escape((unsigned char*)buffer, (size_t) buffer_len,
+        &len, self->conn ? ((connectionObject*)self->conn)->pgconn : NULL);
+    if (to == NULL) {
+        PyErr_NoMemory();
+        goto exit;
     }
 
-    return self->buffer;
+    if (len > 0)
+        rv = Bytes_FromFormat(
+            (self->conn && ((connectionObject*)self->conn)->equote)
+                ? "E'%s'::bytea" : "'%s'::bytea" , to);
+    else
+        rv = Bytes_FromString("''::bytea");
+
+exit:
+    if (to) { PQfreemem(to); }
+#if HAS_MEMORYVIEW
+    if (got_view) { PyBuffer_Release(&view); }
+#endif
+
+    /* Allow Binary(None) to work */
+    if (self->wrapped == Py_None) {
+        Py_INCREF(psyco_null);
+        rv = psyco_null;
+    }
+
+    /* if the wrapped object is not bytes or a buffer, this is an error */
+    if (!rv && !PyErr_Occurred()) {
+        PyErr_Format(PyExc_TypeError, "can't escape %s to binary",
+            Py_TYPE(self->wrapped)->tp_name);
+    }
+
+    return rv;
 }
 
 /* binary_str, binary_getquoted - return result of quoting */
 
 static PyObject *
-binary_str(binaryObject *self)
+binary_getquoted(binaryObject *self, PyObject *args)
 {
     if (self->buffer == NULL) {
-        binary_quote(self);
+        self->buffer = binary_quote(self);
     }
     Py_XINCREF(self->buffer);
     return self->buffer;
 }
 
 static PyObject *
-binary_getquoted(binaryObject *self, PyObject *args)
+binary_str(binaryObject *self)
 {
-    return binary_str(self);
+    return psycopg_ensure_text(binary_getquoted(self, NULL));
 }
 
 static PyObject *
@@ -153,8 +185,8 @@ binary_conform(binaryObject *self, PyObject *args)
 /* object member list */
 
 static struct PyMemberDef binaryObject_members[] = {
-    {"adapted", T_OBJECT, offsetof(binaryObject, wrapped), RO},
-    {"buffer", T_OBJECT, offsetof(binaryObject, buffer), RO},
+    {"adapted", T_OBJECT, offsetof(binaryObject, wrapped), READONLY},
+    {"buffer", T_OBJECT, offsetof(binaryObject, buffer), READONLY},
     {NULL}
 };
 
@@ -176,7 +208,7 @@ binary_setup(binaryObject *self, PyObject *str)
 {
     Dprintf("binary_setup: init binary object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
-        self, ((PyObject *)self)->ob_refcnt
+        self, Py_REFCNT(self)
       );
 
     self->buffer = NULL;
@@ -186,7 +218,7 @@ binary_setup(binaryObject *self, PyObject *str)
 
     Dprintf("binary_setup: good binary object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
-        self, ((PyObject *)self)->ob_refcnt);
+        self, Py_REFCNT(self));
     return 0;
 }
 
@@ -212,10 +244,10 @@ binary_dealloc(PyObject* obj)
 
     Dprintf("binary_dealloc: deleted binary object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
-        obj, obj->ob_refcnt
+        obj, Py_REFCNT(obj)
       );
 
-    obj->ob_type->tp_free(obj);
+    Py_TYPE(obj)->tp_free(obj);
 }
 
 static int
@@ -253,8 +285,7 @@ binary_repr(binaryObject *self)
 "Binary(buffer) -> new binary object"
 
 PyTypeObject binaryType = {
-    PyObject_HEAD_INIT(NULL)
-    0,
+    PyVarObject_HEAD_INIT(NULL, 0)
     "psycopg2._psycopg.Binary",
     sizeof(binaryObject),
     0,

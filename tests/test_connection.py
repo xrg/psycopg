@@ -1,18 +1,40 @@
 #!/usr/bin/env python
 
+# test_connection.py - unit test for connection attributes
+#
+# Copyright (C) 2008-2011 James Henstridge  <james@jamesh.id.au>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
+
 import time
 import threading
-from testutils import unittest, decorate_all_tests, skip_if_no_pg_sleep
+from testutils import unittest, decorate_all_tests, skip_before_postgres
 from operator import attrgetter
 
 import psycopg2
 import psycopg2.extensions
-import tests
+from testconfig import dsn, dbname
 
 class ConnectionTests(unittest.TestCase):
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
 
     def tearDown(self):
         if not self.conn.closed:
@@ -92,12 +114,12 @@ class ConnectionTests(unittest.TestCase):
         self.assertRaises(psycopg2.NotSupportedError,
             cnn.xid, 42, "foo", "bar")
 
-    @skip_if_no_pg_sleep('conn')
+    @skip_before_postgres(8, 2)
     def test_concurrent_execution(self):
         def slave():
-            cnn = psycopg2.connect(tests.dsn)
+            cnn = psycopg2.connect(dsn)
             cur = cnn.cursor()
-            cur.execute("select pg_sleep(2)")
+            cur.execute("select pg_sleep(4)")
             cur.close()
             cnn.close()
 
@@ -108,8 +130,24 @@ class ConnectionTests(unittest.TestCase):
         t2.start()
         t1.join()
         t2.join()
-        self.assert_(time.time() - t0 < 3,
+        self.assert_(time.time() - t0 < 7,
             "something broken in concurrency")
+
+    def test_encoding_name(self):
+        self.conn.set_client_encoding("EUC_JP")
+        # conn.encoding is 'EUCJP' now.
+        cur = self.conn.cursor()
+        psycopg2.extensions.register_type(psycopg2.extensions.UNICODE, cur)
+        cur.execute("select 'foo'::text;")
+        self.assertEqual(cur.fetchone()[0], u'foo')
+
+    def test_weakref(self):
+        from weakref import ref
+        conn = psycopg2.connect(dsn)
+        w = ref(conn)
+        conn.close()
+        del conn
+        self.assert_(w() is None)
 
 
 class IsolationLevelsTestCase(unittest.TestCase):
@@ -133,7 +171,7 @@ class IsolationLevelsTestCase(unittest.TestCase):
                 conn.close()
 
     def connect(self):
-        conn = psycopg2.connect(tests.dsn)
+        conn = psycopg2.connect(dsn)
         self._conns.append(conn)
         return conn
 
@@ -277,30 +315,6 @@ class IsolationLevelsTestCase(unittest.TestCase):
         self.assertEqual(2, cur2.fetchone()[0])
 
 
-def skip_if_tpc_disabled(f):
-    """Skip a test if the server has tpc support disabled."""
-    def skip_if_tpc_disabled_(self):
-        cnn = self.connect()
-        cur = cnn.cursor()
-        try:
-            cur.execute("SHOW max_prepared_transactions;")
-        except psycopg2.ProgrammingError:
-            return self.skipTest(
-                "server too old: two phase transactions not supported.")
-        else:
-            mtp = int(cur.fetchone()[0])
-        cnn.close()
-
-        if not mtp:
-            return self.skipTest(
-                "server not configured for two phase transactions. "
-                "set max_prepared_transactions to > 0 to run the test")
-        return f(self)
-
-    skip_if_tpc_disabled_.__name__ = f.__name__
-    return skip_if_tpc_disabled_
-
-
 class ConnectionTwoPhaseTests(unittest.TestCase):
     def setUp(self):
         self._conns = []
@@ -316,7 +330,6 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
             if not conn.closed:
                 conn.close()
 
-
     def clear_test_xacts(self):
         """Rollback all the prepared transaction in the testing db."""
         cnn = self.connect()
@@ -325,7 +338,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         try:
             cur.execute(
                 "select gid from pg_prepared_xacts where database = %s",
-                (tests.dbname,))
+                (dbname,))
         except psycopg2.ProgrammingError:
             cnn.rollback()
             cnn.close()
@@ -354,7 +367,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         cur.execute("""
             select count(*) from pg_prepared_xacts
             where database = %s;""",
-            (tests.dbname,))
+            (dbname,))
         rv = cur.fetchone()[0]
         cnn.close()
         return rv
@@ -369,7 +382,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         return rv
 
     def connect(self):
-        conn = psycopg2.connect(tests.dsn)
+        conn = psycopg2.connect(dsn)
         self._conns.append(conn)
         return conn
 
@@ -532,13 +545,13 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
             select gid, prepared, owner, database
             from pg_prepared_xacts
             where database = %s;""",
-            (tests.dbname,))
+            (dbname,))
         okvals = cur.fetchall()
         okvals.sort()
 
         cnn = self.connect()
         xids = cnn.tpc_recover()
-        xids = [ xid for xid in xids if xid.database == tests.dbname ]
+        xids = [ xid for xid in xids if xid.database == dbname ]
         xids.sort(key=attrgetter('gtrid'))
 
         # check the values returned
@@ -558,7 +571,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         cnn = self.connect()
         cur = cnn.cursor()
         cur.execute("select gid from pg_prepared_xacts where database = %s;",
-            (tests.dbname,))
+            (dbname,))
         self.assertEqual('42_Z3RyaWQ=_YnF1YWw=', cur.fetchone()[0])
 
     def test_xid_roundtrip(self):
@@ -575,7 +588,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
 
             cnn = self.connect()
             xids = [ xid for xid in cnn.tpc_recover()
-                if xid.database == tests.dbname ]
+                if xid.database == dbname ]
             self.assertEqual(1, len(xids))
             xid = xids[0]
             self.assertEqual(xid.format_id, fid)
@@ -597,7 +610,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
 
             cnn = self.connect()
             xids = [ xid for xid in cnn.tpc_recover()
-                if xid.database == tests.dbname ]
+                if xid.database == dbname ]
             self.assertEqual(1, len(xids))
             xid = xids[0]
             self.assertEqual(xid.format_id, None)
@@ -643,7 +656,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         cnn.tpc_prepare()
         cnn.reset()
         xid = [ xid for xid in cnn.tpc_recover()
-            if xid.database == tests.dbname ][0]
+            if xid.database == dbname ][0]
         self.assertEqual(10, xid.format_id)
         self.assertEqual('uni', xid.gtrid)
         self.assertEqual('code', xid.bqual)
@@ -659,7 +672,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         cnn.reset()
 
         xid = [ xid for xid in cnn.tpc_recover()
-            if xid.database == tests.dbname ][0]
+            if xid.database == dbname ][0]
         self.assertEqual(None, xid.format_id)
         self.assertEqual('transaction-id', xid.gtrid)
         self.assertEqual(None, xid.bqual)
@@ -670,6 +683,7 @@ class ConnectionTwoPhaseTests(unittest.TestCase):
         cnn.tpc_prepare()
         self.assertRaises(psycopg2.ProgrammingError, cnn.cancel)
 
+from testutils import skip_if_tpc_disabled
 decorate_all_tests(ConnectionTwoPhaseTests, skip_if_tpc_disabled)
 
 

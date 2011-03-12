@@ -26,11 +26,6 @@
 #ifndef PSYCOPG_CONNECTION_H
 #define PSYCOPG_CONNECTION_H 1
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <libpq-fe.h>
-
-#include "psycopg/config.h"
 #include "psycopg/xid.h"
 
 #ifdef __cplusplus
@@ -88,6 +83,7 @@ typedef struct {
     char *dsn;              /* data source name */
     char *critical;         /* critical error on this connection */
     char *encoding;         /* current backend encoding */
+    char *codec;            /* python codec name for encoding */
 
     long int closed;          /* 1 means connection has been closed;
                                  2 that something horrible happened */
@@ -103,7 +99,7 @@ typedef struct {
     PGconn *pgconn;           /* the postgresql connection */
     PGcancel *cancel;         /* the cancellation structure */
 
-    PyObject *async_cursor;   /* a cursor executing an asynchronous query */
+    PyObject *async_cursor;   /* weakref to a cursor executing an asynchronous query */
     int async_status;         /* asynchronous execution status */
 
     /* notice processing */
@@ -119,13 +115,17 @@ typedef struct {
     PyObject *binary_types;   /* a set of typecasters for binary types */
 
     int equote;               /* use E''-style quotes for escaped strings */
+    PyObject *weakreflist;    /* list of weak references */
 
 } connectionObject;
 
 /* C-callable functions in connection_int.c and connection_ext.c */
+HIDDEN PyObject *conn_text_from_chars(connectionObject *pgconn, const char *str);
 HIDDEN int  conn_get_standard_conforming_strings(PGconn *pgconn);
 HIDDEN int  conn_get_isolation_level(PGresult *pgres);
 HIDDEN int  conn_get_protocol_version(PGconn *pgconn);
+HIDDEN int  conn_get_server_version(PGconn *pgconn);
+HIDDEN PGcancel *conn_get_cancel(PGconn *pgconn);
 HIDDEN void conn_notice_process(connectionObject *self);
 HIDDEN void conn_notice_clean(connectionObject *self);
 HIDDEN void conn_notifies_process(connectionObject *self);

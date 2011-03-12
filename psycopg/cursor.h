@@ -26,11 +26,6 @@
 #ifndef PSYCOPG_CURSOR_H
 #define PSYCOPG_CURSOR_H 1
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <libpq-fe.h>
-
-#include "psycopg/config.h"
 #include "psycopg/connection.h"
 
 #ifdef __cplusplus
@@ -39,7 +34,8 @@ extern "C" {
 
 extern HIDDEN PyTypeObject cursorType;
 
-typedef struct {
+/* the typedef is forward-declared in psycopg.h */
+struct cursorObject {
     PyObject_HEAD
 
     connectionObject *conn; /* connection owning the cursor */
@@ -50,6 +46,7 @@ typedef struct {
     long int rowcount;       /* number of rows affected by last execute */
     long int columns;        /* number of columns fetched from the db */
     long int arraysize;      /* how many rows should fetchmany() return */
+    long int itersize;       /* how many rows should iter(cur) fetch in named cursors */
     long int row;            /* the row counter for fetch*() operations */
     long int mark;           /* transaction marker, copied from conn */
 
@@ -81,9 +78,13 @@ typedef struct {
     PyObject *string_types;   /* a set of typecasters for string types */
     PyObject *binary_types;   /* a set of typecasters for binary types */
 
-} cursorObject;
+    PyObject *weakreflist;    /* list of weak references */
+
+};
+
 
 /* C-callable functions in cursor_int.c and cursor_ext.c */
+HIDDEN PyObject *curs_get_cast(cursorObject *self, PyObject *oid);
 HIDDEN void curs_reset(cursorObject *self);
 
 /* exception-raising macros */

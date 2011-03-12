@@ -16,16 +16,15 @@
 
 import psycopg2
 import psycopg2.extras
-from testutils import unittest
-
-import tests
+from testutils import unittest, skip_if_no_namedtuple
+from testconfig import dsn
 
 
 class ExtrasDictCursorTests(unittest.TestCase):
     """Test if DictCursor extension class works."""
 
     def setUp(self):
-        self.conn = psycopg2.connect(tests.dsn)
+        self.conn = psycopg2.connect(dsn)
         curs = self.conn.cursor()
         curs.execute("CREATE TEMPORARY TABLE ExtrasDictCursorTests (foo text)")
         curs.execute("INSERT INTO ExtrasDictCursorTests VALUES ('bar')")
@@ -113,18 +112,6 @@ class ExtrasDictCursorTests(unittest.TestCase):
         self.failUnless(row[0] == 'qux')
 
 
-def if_has_namedtuple(f):
-    def if_has_namedtuple_(self):
-        try:
-            from collections import namedtuple
-        except ImportError:
-            return self.skipTest("collections.namedtuple not available")
-        else:
-            return f(self)
-
-    if_has_namedtuple_.__name__ = f.__name__
-    return if_has_namedtuple_
-
 class NamedTupleCursorTest(unittest.TestCase):
     def setUp(self):
         from psycopg2.extras import NamedTupleConnection
@@ -135,7 +122,7 @@ class NamedTupleCursorTest(unittest.TestCase):
             self.conn = None
             return
 
-        self.conn = psycopg2.connect(tests.dsn,
+        self.conn = psycopg2.connect(dsn,
             connection_factory=NamedTupleConnection)
         curs = self.conn.cursor()
         curs.execute("CREATE TEMPORARY TABLE nttest (i int, s text)")
@@ -148,7 +135,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         if self.conn is not None:
             self.conn.close()
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_fetchone(self):
         curs = self.conn.cursor()
         curs.execute("select * from nttest where i = 1")
@@ -158,7 +145,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         self.assertEqual(t[1], 'foo')
         self.assertEqual(t.s, 'foo')
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_fetchmany(self):
         curs = self.conn.cursor()
         curs.execute("select * from nttest order by 1")
@@ -169,7 +156,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         self.assertEqual(res[1].i, 2)
         self.assertEqual(res[1].s, 'bar')
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_fetchall(self):
         curs = self.conn.cursor()
         curs.execute("select * from nttest order by 1")
@@ -182,7 +169,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         self.assertEqual(res[2].i, 3)
         self.assertEqual(res[2].s, 'baz')
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_iter(self):
         curs = self.conn.cursor()
         curs.execute("select * from nttest order by 1")
@@ -207,7 +194,7 @@ class NamedTupleCursorTest(unittest.TestCase):
             try:
                 if self.conn is not None:
                     self.conn.close()
-                self.conn = psycopg2.connect(tests.dsn,
+                self.conn = psycopg2.connect(dsn,
                     connection_factory=NamedTupleConnection)
                 curs = self.conn.cursor()
                 curs.execute("select 1")
@@ -220,7 +207,7 @@ class NamedTupleCursorTest(unittest.TestCase):
             # skip the test
             pass
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_record_updated(self):
         curs = self.conn.cursor()
         curs.execute("select 1 as foo;")
@@ -232,7 +219,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         self.assertEqual(r.bar, 2)
         self.assertRaises(AttributeError, getattr, r, 'foo')
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_no_result_no_surprise(self):
         curs = self.conn.cursor()
         curs.execute("update nttest set s = s")
@@ -241,7 +228,7 @@ class NamedTupleCursorTest(unittest.TestCase):
         curs.execute("update nttest set s = s")
         self.assertRaises(psycopg2.ProgrammingError, curs.fetchall)
 
-    @if_has_namedtuple
+    @skip_if_no_namedtuple
     def test_minimal_generation(self):
         # Instrument the class to verify it gets called the minimum number of times.
         from psycopg2.extras import NamedTupleCursor

@@ -89,14 +89,34 @@ by the `psycopg2.extensions.adapt()` function.
 The `~cursor.execute()` method adapts its arguments to the
 `~psycopg2.extensions.ISQLQuote` protocol.  Objects that conform to this
 protocol expose a `!getquoted()` method returning the SQL representation
-of the object as a string.
+of the object as a string (the method must return `!bytes` in Python 3).
+Optionally the conform object may expose a
+`~psycopg2.extensions.ISQLQuote.prepare()` method.
 
-The easiest way to adapt an object to an SQL string is to register an adapter
-function via the `~psycopg2.extensions.register_adapter()` function.  The
-adapter function must take the value to be adapted as argument and return a
-conform object.  A convenient object is the `~psycopg2.extensions.AsIs`
-wrapper, whose `!getquoted()` result is simply the `!str()`\ ing
-conversion of the wrapped object.
+There are two basic ways to have a Python object adapted to SQL:
+
+- the object itself is conform, or knows how to make itself conform. Such
+  object must expose a `__conform__()` method that will be called with the
+  protocol object as argument. The object can check that the protocol is
+  `!ISQLQuote`, in which case it can return `!self` (if the object also
+  implements `!getquoted()`) or a suitable wrapper object. This option is
+  viable if you are the author of the object and if the object is specifically
+  designed for the database (i.e. having Psycopg as a dependency and polluting
+  its interface with the required methods doesn't bother you). For a simple
+  example you can take a look at the source code for the
+  `psycopg2.extras.Inet` object.
+
+- If implementing the `!ISQLQuote` interface directly in the object is not an
+  option (maybe because the object to adapt comes from a third party library),
+  you can use an *adaptation function*, taking the object to be adapted as
+  argument and returning a conforming object.  The adapter must be
+  registered via the `~psycopg2.extensions.register_adapter()` function.  A
+  simple example wrapper is `!psycopg2.extras.UUID_adapter` used by the
+  `~psycopg2.extras.register_uuid()` function.
+
+A convenient object to write adapters is the `~psycopg2.extensions.AsIs`
+wrapper, whose `!getquoted()` result is simply the `!str()`\ ing conversion of
+the wrapped object.
 
 .. index::
     single: Example; Types adaptation
@@ -235,7 +255,7 @@ wasting resources.
 
 A simple application could poll the connection from time to time to check if
 something new has arrived. A better strategy is to use some I/O completion
-function such as |select()|_ to sleep until awaken from the kernel when there is
+function such as :py:func:`~select.select` to sleep until awaken from the kernel when there is
 some data to read on the connection, thereby using no CPU unless there is
 something to read::
 
@@ -269,9 +289,9 @@ in a separate :program:`psql` shell, the output may look similar to::
     Timeout
     ...
 
-Notice that the payload is only available from PostgreSQL 9.0: notifications
-received from a previous version server will have the `!payload` attribute set
-to the empty string.
+Note that the payload is only available from PostgreSQL 9.0: notifications
+received from a previous version server will have the
+`~psycopg2.extensions.Notify.payload` attribute set to the empty string.
 
 .. versionchanged:: 2.3
     Added `~psycopg2.extensions.Notify` object and handling notification
@@ -302,7 +322,7 @@ descriptor and `~connection.poll()` to make communication proceed according to
 the current connection state.
 
 The following is an example loop using methods `!fileno()` and `!poll()`
-together with the Python |select()|_ function in order to carry on
+together with the Python :py:func:`~select.select` function in order to carry on
 asynchronous operations with Psycopg::
 
     def wait(conn):
@@ -316,9 +336,6 @@ asynchronous operations with Psycopg::
                 select.select([conn.fileno()], [], [])
             else:
                 raise psycopg2.OperationalError("poll() returned %s" % state)
-
-.. |select()| replace:: `!select()`
-.. _select(): http://docs.python.org/library/select.html#select.select
 
 The above loop of course would block an entire application: in a real
 asynchronous framework, `!select()` would be called on many file descriptors
@@ -352,7 +369,7 @@ client and available using the regular cursor methods:
     42
 
 When an asynchronous query is being executed, `connection.isexecuting()` returns
-`True`. Two cursors can't execute concurrent queries on the same asynchronous
+`!True`. Two cursors can't execute concurrent queries on the same asynchronous
 connection.
 
 There are several limitations in using asynchronous connections: the

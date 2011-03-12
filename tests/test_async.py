@@ -1,5 +1,29 @@
 #!/usr/bin/env python
-from testutils import unittest, skip_if_no_pg_sleep
+# -*- coding: utf-8 -*-
+
+# test_async.py - unit test for asynchronous API
+#
+# Copyright (C) 2010-2011 Jan Urbański  <wulczer@wulczer.org>
+#
+# psycopg2 is free software: you can redistribute it and/or modify it
+# under the terms of the GNU Lesser General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# In addition, as a special exception, the copyright holders give
+# permission to link this program with the OpenSSL library (or with
+# modified versions of OpenSSL that use the same license as OpenSSL),
+# and distribute linked combinations including the two.
+#
+# You must obey the GNU Lesser General Public License in all respects for
+# all of the code used other than OpenSSL.
+#
+# psycopg2 is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+# License for more details.
+
+from testutils import unittest, skip_before_postgres
 
 import psycopg2
 from psycopg2 import extensions
@@ -8,12 +32,7 @@ import time
 import select
 import StringIO
 
-import sys
-if sys.version_info < (3,):
-    import tests
-else:
-    import py3tests as tests
-
+from testconfig import dsn
 
 class PollableStub(object):
     """A 'pollable' wrapper allowing analysis of the `poll()` calls."""
@@ -33,8 +52,8 @@ class PollableStub(object):
 class AsyncTests(unittest.TestCase):
 
     def setUp(self):
-        self.sync_conn = psycopg2.connect(tests.dsn)
-        self.conn = psycopg2.connect(tests.dsn, async=True)
+        self.sync_conn = psycopg2.connect(dsn)
+        self.conn = psycopg2.connect(dsn, async=True)
 
         self.wait(self.conn)
 
@@ -94,7 +113,7 @@ class AsyncTests(unittest.TestCase):
         self.assertFalse(self.conn.isexecuting())
         self.assertEquals(cur.fetchone()[0], "a")
 
-    @skip_if_no_pg_sleep('conn')
+    @skip_before_postgres(8, 2)
     def test_async_callproc(self):
         cur = self.conn.cursor()
         cur.callproc("pg_sleep", (0.1, ))
@@ -309,7 +328,7 @@ class AsyncTests(unittest.TestCase):
             def __init__(self, dsn, async=0):
                 psycopg2.extensions.connection.__init__(self, dsn, async=async)
 
-        conn = psycopg2.connect(tests.dsn, connection_factory=MyConn, async=True)
+        conn = psycopg2.connect(dsn, connection_factory=MyConn, async=True)
         self.assert_(isinstance(conn, MyConn))
         self.assert_(conn.async)
         conn.close()
@@ -414,6 +433,18 @@ class AsyncTests(unittest.TestCase):
         self.wait(cur)
         self.assertEqual("CREATE TABLE", cur.statusmessage)
         self.assert_(self.conn.notices)
+
+    def test_async_cursor_gone(self):
+        cur = self.conn.cursor()
+        cur.execute("select 42;");
+        del cur
+        self.assertRaises(psycopg2.InterfaceError, self.wait, self.conn)
+
+        # The connection is still usable
+        cur = self.conn.cursor()
+        cur.execute("select 42;");
+        self.wait(self.conn)
+        self.assertEqual(cur.fetchone(), (42,))
 
 
 def test_suite():

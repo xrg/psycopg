@@ -23,15 +23,9 @@
  * License for more details.
  */
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-#include <structmember.h>
-#include <stringobject.h>
-
 #define PSYCOPG_MODULE
-#include "psycopg/config.h"
-#include "psycopg/python.h"
 #include "psycopg/psycopg.h"
+
 #include "psycopg/adapter_list.h"
 #include "psycopg/microprotocols.h"
 #include "psycopg/microprotocols_proto.h"
@@ -51,19 +45,22 @@ list_quote(listObject *self)
 
     /* empty arrays are converted to NULLs (still searching for a way to
        insert an empty array in postgresql */
-    if (len == 0) return PyString_FromString("'{}'");
+    if (len == 0) return Bytes_FromString("'{}'");
 
     tmp = PyTuple_New(len);
 
     for (i=0; i<len; i++) {
         PyObject *quoted;
-    PyObject *wrapped = PyList_GET_ITEM(self->wrapped, i);
-    if (wrapped == Py_None)
-        quoted = PyString_FromString("NULL");
-    else
-        quoted = microprotocol_getquoted(wrapped,
-                                   (connectionObject*)self->connection);
-        if (quoted == NULL) goto error;
+        PyObject *wrapped = PyList_GET_ITEM(self->wrapped, i);
+        if (wrapped == Py_None) {
+            Py_INCREF(psyco_null);
+            quoted = psyco_null;
+        }
+        else {
+            quoted = microprotocol_getquoted(wrapped,
+                                       (connectionObject*)self->connection);
+            if (quoted == NULL) goto error;
+        }
 
         /* here we don't loose a refcnt: SET_ITEM does not change the
            reference count and we are just transferring ownership of the tmp
@@ -73,11 +70,11 @@ list_quote(listObject *self)
 
     /* now that we have a tuple of adapted objects we just need to join them
        and put "ARRAY[] around the result */
-    str = PyString_FromString(", ");
+    str = Bytes_FromString(", ");
     joined = PyObject_CallMethod(str, "join", "(O)", tmp);
     if (joined == NULL) goto error;
 
-    res = PyString_FromFormat("ARRAY[%s]", PyString_AsString(joined));
+    res = Bytes_FromFormat("ARRAY[%s]", Bytes_AsString(joined));
 
  error:
     Py_XDECREF(tmp);
@@ -89,7 +86,7 @@ list_quote(listObject *self)
 static PyObject *
 list_str(listObject *self)
 {
-    return list_quote(self);
+    return psycopg_ensure_text(list_quote(self));
 }
 
 static PyObject *
@@ -139,7 +136,7 @@ list_conform(listObject *self, PyObject *args)
 /* object member list */
 
 static struct PyMemberDef listObject_members[] = {
-    {"adapted", T_OBJECT, offsetof(listObject, wrapped), RO},
+    {"adapted", T_OBJECT, offsetof(listObject, wrapped), READONLY},
     {NULL}
 };
 
@@ -161,7 +158,7 @@ list_setup(listObject *self, PyObject *obj, const char *enc)
 {
     Dprintf("list_setup: init list object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
-        self, ((PyObject *)self)->ob_refcnt
+        self, Py_REFCNT(self)
       );
 
     if (!PyList_Check(obj))
@@ -176,7 +173,7 @@ list_setup(listObject *self, PyObject *obj, const char *enc)
 
     Dprintf("list_setup: good list object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
-        self, ((PyObject *)self)->ob_refcnt
+        self, Py_REFCNT(self)
       );
     return 0;
 }
@@ -201,9 +198,9 @@ list_dealloc(PyObject* obj)
     if (self->encoding) free(self->encoding);
 
     Dprintf("list_dealloc: deleted list object at %p, "
-            "refcnt = " FORMAT_CODE_PY_SSIZE_T, obj, obj->ob_refcnt);
+            "refcnt = " FORMAT_CODE_PY_SSIZE_T, obj, Py_REFCNT(obj));
 
-    obj->ob_type->tp_free(obj);
+    Py_TYPE(obj)->tp_free(obj);
 }
 
 static int
@@ -242,8 +239,7 @@ list_repr(listObject *self)
 "List(list) -> new list wrapper object"
 
 PyTypeObject listType = {
-    PyObject_HEAD_INIT(NULL)
-    0,
+    PyVarObject_HEAD_INIT(NULL, 0)
     "psycopg2._psycopg.List",
     sizeof(listObject),
     0,
