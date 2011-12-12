@@ -292,13 +292,14 @@ typecast_init(PyObject *dict)
 
     /* register the date/time typecasters with their original names */
 #ifdef HAVE_MXDATETIME
-    if (psyco_typecast_mxdatetime_init()) { return -1; }
-    for (i = 0; typecast_mxdatetime[i].name != NULL; i++) {
-        typecastObject *t;
-        Dprintf("typecast_init: initializing %s", typecast_mxdatetime[i].name);
-        t = (typecastObject *)typecast_from_c(&(typecast_mxdatetime[i]), dict);
-        if (t == NULL) return -1;
-        PyDict_SetItem(dict, t->name, (PyObject *)t);
+    if (0 == psyco_typecast_mxdatetime_init()) {
+        for (i = 0; typecast_mxdatetime[i].name != NULL; i++) {
+            typecastObject *t;
+            Dprintf("typecast_init: initializing %s", typecast_mxdatetime[i].name);
+            t = (typecastObject *)typecast_from_c(&(typecast_mxdatetime[i]), dict);
+            if (t == NULL) return -1;
+            PyDict_SetItem(dict, t->name, (PyObject *)t);
+        }
     }
 #endif
 
@@ -600,6 +601,29 @@ typecast_from_python(PyObject *self, PyObject *args, PyObject *keywds)
     }
 
     return typecast_new(name, v, cast, base);
+}
+
+PyObject *
+typecast_array_from_python(PyObject *self, PyObject *args, PyObject *keywds)
+{
+    PyObject *values, *name = NULL, *base = NULL;
+    typecastObject *obj = NULL;
+
+    static char *kwlist[] = {"values", "name", "baseobj", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, keywds, "O!O!O!", kwlist,
+                                     &PyTuple_Type, &values,
+                                     &Text_Type, &name,
+                                     &typecastType, &base)) {
+        return NULL;
+    }
+
+    if ((obj = (typecastObject *)typecast_new(name, values, NULL, base))) {
+        obj->ccast = typecast_GENERIC_ARRAY_cast;
+        obj->pcast = NULL;
+    }
+
+    return (PyObject *)obj;
 }
 
 PyObject *

@@ -39,7 +39,7 @@ from psycopg2._psycopg import DECIMALARRAY, FLOATARRAY, INTEGERARRAY, INTERVALAR
 from psycopg2._psycopg import LONGINTEGERARRAY, ROWIDARRAY, STRINGARRAY, TIMEARRAY
 from psycopg2._psycopg import UNICODEARRAY
 
-from psycopg2._psycopg import Binary, Boolean, Float, QuotedString, AsIs
+from psycopg2._psycopg import Binary, Boolean, Int, Float, QuotedString, AsIs
 try:
     from psycopg2._psycopg import MXDATE, MXDATETIME, MXINTERVAL, MXTIME
     from psycopg2._psycopg import MXDATEARRAY, MXDATETIMEARRAY, MXINTERVALARRAY, MXTIMEARRAY
@@ -57,7 +57,7 @@ except ImportError:
     pass
 
 from psycopg2._psycopg import adapt, adapters, encodings, connection, cursor, lobject, Xid
-from psycopg2._psycopg import string_types, binary_types, new_type, register_type
+from psycopg2._psycopg import string_types, binary_types, new_type, new_array_type, register_type
 from psycopg2._psycopg import ISQLQuote, Notify
 
 from psycopg2._psycopg import QueryCanceledError, TransactionRollbackError
@@ -68,13 +68,11 @@ except ImportError:
     pass
 
 """Isolation level values."""
-ISOLATION_LEVEL_AUTOCOMMIT     = 0
-ISOLATION_LEVEL_READ_COMMITTED = 1 
-ISOLATION_LEVEL_SERIALIZABLE   = 2
-
-# PostgreSQL maps the the other standard values to already defined levels
-ISOLATION_LEVEL_REPEATABLE_READ  = ISOLATION_LEVEL_SERIALIZABLE
-ISOLATION_LEVEL_READ_UNCOMMITTED = ISOLATION_LEVEL_READ_COMMITTED
+ISOLATION_LEVEL_AUTOCOMMIT          = 0
+ISOLATION_LEVEL_READ_UNCOMMITTED    = 1
+ISOLATION_LEVEL_READ_COMMITTED      = 2
+ISOLATION_LEVEL_REPEATABLE_READ     = 3
+ISOLATION_LEVEL_SERIALIZABLE        = 4
 
 """psycopg connection status values."""
 STATUS_SETUP    = 0
@@ -160,5 +158,6 @@ for k, v in encodings.items():
     k = k.replace('_', '').replace('-', '').upper()
     encodings[k] = v
 
+del k, v
 
 __all__ = filter(lambda k: not k.startswith('_'), locals().keys())
