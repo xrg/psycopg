@@ -32,6 +32,13 @@
 extern "C" {
 #endif
 
+/* isolation levels */
+#define ISOLATION_LEVEL_AUTOCOMMIT          0
+#define ISOLATION_LEVEL_READ_UNCOMMITTED    4
+#define ISOLATION_LEVEL_READ_COMMITTED      1
+#define ISOLATION_LEVEL_REPEATABLE_READ     2
+#define ISOLATION_LEVEL_SERIALIZABLE        3
+
 /* connection status */
 #define CONN_STATUS_SETUP       0
 #define CONN_STATUS_READY       1
@@ -124,27 +131,27 @@ typedef struct {
 /* C-callable functions in connection_int.c and connection_ext.c */
 HIDDEN PyObject *conn_text_from_chars(connectionObject *pgconn, const char *str);
 HIDDEN int  conn_get_standard_conforming_strings(PGconn *pgconn);
-HIDDEN int  conn_get_isolation_level(connectionObject *self);
+RAISES_NEG HIDDEN int  conn_get_isolation_level(connectionObject *self);
 HIDDEN int  conn_get_protocol_version(PGconn *pgconn);
 HIDDEN int  conn_get_server_version(PGconn *pgconn);
 HIDDEN PGcancel *conn_get_cancel(PGconn *pgconn);
 HIDDEN void conn_notice_process(connectionObject *self);
 HIDDEN void conn_notice_clean(connectionObject *self);
 HIDDEN void conn_notifies_process(connectionObject *self);
-HIDDEN int  conn_setup(connectionObject *self, PGconn *pgconn);
+RAISES_NEG HIDDEN int  conn_setup(connectionObject *self, PGconn *pgconn);
 HIDDEN int  conn_connect(connectionObject *self, long int async);
 HIDDEN void conn_close(connectionObject *self);
-HIDDEN int  conn_commit(connectionObject *self);
-HIDDEN int  conn_rollback(connectionObject *self);
-HIDDEN int  conn_set_session(connectionObject *self, const char *isolevel,
+RAISES_NEG HIDDEN int  conn_commit(connectionObject *self);
+RAISES_NEG HIDDEN int  conn_rollback(connectionObject *self);
+RAISES_NEG HIDDEN int  conn_set_session(connectionObject *self, const char *isolevel,
                                  const char *readonly, const char *deferrable,
                                  int autocommit);
 HIDDEN int  conn_set_autocommit(connectionObject *self, int value);
-HIDDEN int  conn_switch_isolation_level(connectionObject *self, int level);
-HIDDEN int  conn_set_client_encoding(connectionObject *self, const char *enc);
+RAISES_NEG HIDDEN int  conn_switch_isolation_level(connectionObject *self, int level);
+RAISES_NEG HIDDEN int  conn_set_client_encoding(connectionObject *self, const char *enc);
 HIDDEN int  conn_poll(connectionObject *self);
-HIDDEN int  conn_tpc_begin(connectionObject *self, XidObject *xid);
-HIDDEN int  conn_tpc_command(connectionObject *self,
+RAISES_NEG HIDDEN int  conn_tpc_begin(connectionObject *self, XidObject *xid);
+RAISES_NEG HIDDEN int  conn_tpc_command(connectionObject *self,
                              const char *cmd, XidObject *xid);
 HIDDEN PyObject *conn_tpc_recover(connectionObject *self);
 

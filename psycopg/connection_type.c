@@ -122,8 +122,6 @@ psyco_conn_cursor(connectionObject *self, PyObject *args, PyObject *keywds)
 static PyObject *
 psyco_conn_close(connectionObject *self, PyObject *args)
 {
-    EXC_IF_CONN_CLOSED(self);
-
     Dprintf("psyco_conn_close: closing connection at %p", self);
     conn_close(self);
     Dprintf("psyco_conn_close: connection at %p closed", self);
@@ -411,7 +409,9 @@ _psyco_conn_parse_isolevel(connectionObject *self, PyObject *pyval)
             goto exit;
         }
 
-        isolevel = conn_isolevels + level;
+        isolevel = conn_isolevels;
+        while ((++isolevel)->value != level)
+            ; /* continue */
     }
 
     /* parse from the string -- this includes "default" */
@@ -435,7 +435,8 @@ _psyco_conn_parse_isolevel(connectionObject *self, PyObject *pyval)
 
     /* use only supported levels on older PG versions */
     if (isolevel && self->server_version < 80000) {
-        if (isolevel->value == 1 || isolevel->value == 3) {
+        if (isolevel->value == ISOLATION_LEVEL_READ_UNCOMMITTED
+            || isolevel->value == ISOLATION_LEVEL_REPEATABLE_READ) {
             ++isolevel;
         }
     }
@@ -525,7 +526,7 @@ psyco_conn_set_session(connectionObject *self, PyObject *args, PyObject *kwargs)
         if (-1 == c_autocommit) { return NULL; }
     }
 
-    if (0 != conn_set_session(self,
+    if (0 > conn_set_session(self,
             c_isolevel, c_readonly, c_deferrable, c_autocommit)) {
         return NULL;
     }
@@ -547,7 +548,7 @@ psyco_conn_autocommit_get(connectionObject *self)
     return ret;
 }
 
-static PyObject *
+BORROWED static PyObject *
 _psyco_conn_autocommit_set_checks(connectionObject *self)
 {
     /* wrapper to use the EXC_IF macros.
@@ -634,7 +635,7 @@ psyco_conn_set_client_encoding(connectionObject *self, PyObject *args)
 
     if (!PyArg_ParseTuple(args, "s", &enc)) return NULL;
 
-    if (conn_set_client_encoding(self, enc) == 0) {
+    if (conn_set_client_encoding(self, enc) >= 0) {
         Py_INCREF(Py_None);
         rv = Py_None;
     }
@@ -698,8 +699,8 @@ psyco_conn_get_parameter_status(connectionObject *self, PyObject *args)
 static PyObject *
 psyco_conn_lobject(connectionObject *self, PyObject *args, PyObject *keywds)
 {
-    Oid oid=InvalidOid, new_oid=InvalidOid;
-    char *new_file = NULL;
+    int oid = (int)InvalidOid, new_oid = (int)InvalidOid;
+    const char *new_file = NULL;
     const char *smode = "";
     PyObject *factory = (PyObject *)&lobjectType;
     PyObject *obj;
@@ -751,7 +752,7 @@ psyco_conn_lobject(connectionObject *self, PyObject *args, PyObject *keywds)
 "get_backend_pid() -- Get backend process id."
 
 static PyObject *
-psyco_conn_get_backend_pid(connectionObject *self)
+psyco_conn_get_backend_pid(connectionObject *self, PyObject *args)
 {
     EXC_IF_CONN_CLOSED(self);
 
@@ -764,7 +765,7 @@ psyco_conn_get_backend_pid(connectionObject *self)
 "reset() -- Reset current connection to defaults."
 
 static PyObject *
-psyco_conn_reset(connectionObject *self)
+psyco_conn_reset(connectionObject *self, PyObject *args)
 {
     int res;
 
@@ -792,7 +793,7 @@ psyco_conn_get_exception(PyObject *self, void *closure)
 }
 
 static PyObject *
-psyco_conn_poll(connectionObject *self)
+psyco_conn_poll(connectionObject *self, PyObject *args)
 {
     int res;
 
@@ -814,7 +815,7 @@ psyco_conn_poll(connectionObject *self)
 "fileno() -> int -- Return file descriptor associated to database connection."
 
 static PyObject *
-psyco_conn_fileno(connectionObject *self)
+psyco_conn_fileno(connectionObject *self, PyObject *args)
 {
     long int socket;
 
@@ -833,7 +834,7 @@ psyco_conn_fileno(connectionObject *self)
  "executing an asynchronous operation."
 
 static PyObject *
-psyco_conn_isexecuting(connectionObject *self)
+psyco_conn_isexecuting(connectionObject *self, PyObject *args)
 {
     /* synchronous connections will always return False */
     if (self->async == 0) {
@@ -865,7 +866,7 @@ psyco_conn_isexecuting(connectionObject *self)
 "cancel() -- cancel the current operation"
 
 static PyObject *
-psyco_conn_cancel(connectionObject *self)
+psyco_conn_cancel(connectionObject *self, PyObject *args)
 {
     char errbuf[256];
 
