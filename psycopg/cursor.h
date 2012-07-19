@@ -33,6 +33,7 @@ extern "C" {
 #endif
 
 extern HIDDEN PyTypeObject cursorType;
+extern HIDDEN PyTypeObject cursorBinType;
 
 /* the typedef is forward-declared in psycopg.h */
 struct cursorObject {
