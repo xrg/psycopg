@@ -17,6 +17,10 @@ parser.add_option("-t", None,
                   action="store_true", dest="old_proto", default=False,
                   help="Uses the old (installed) library")
 
+parser.add_option("-b", None,
+                  action="store_true", dest="bin_proto", default=False,
+                  help="Uses the binary cursor")
+
 parser.add_option("-n", "--num-reps", dest="num_reps", 
                   help="Number of repetitions for stress test",)
 
@@ -67,7 +71,10 @@ if dbuser is not None:
 
 conn = psycopg2.connect(dsn)
 print 'Connection established'
-cr = conn.cursor()
+if options.bin_proto:
+    cr = psycopg2.extensions.cursor_bin(conn)
+else:
+    cr = conn.cursor()
 
 if options.regulars:
     print "Simple select:"
@@ -84,7 +91,6 @@ if options.regulars:
         psycopg2.extras.register_uuid()
         u = [uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e350'), uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e352')]
         cr.execute("SELECT %s AS foo", (u,))
-        
         print cr.fetchall()
 
     try:
