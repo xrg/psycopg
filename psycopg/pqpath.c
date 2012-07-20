@@ -1001,11 +1001,11 @@ pq_get_last_result(connectionObject *conn)
 
     return result;
 }
+
 /* pq_execute_params - execute a query, possibly asynchronously
 
    this fucntion locks the connection object
    this function call Py_*_ALLOW_THREADS macros */
-
 int
 pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int async)
 {
@@ -1031,7 +1031,7 @@ pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int asyn
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(curs->conn->lock));
 
-    if (pq_begin_locked(curs->conn, &pgres, &error) < 0) {
+    if (pq_begin_locked(curs->conn, &pgres, &error, &_save) < 0) {
         pthread_mutex_unlock(&(curs->conn->lock));
         Py_BLOCK_THREADS;
         pq_complete_error(curs->conn, &pgres, &error);
