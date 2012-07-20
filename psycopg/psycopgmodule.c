@@ -869,7 +869,7 @@ INIT_MODULE(_psycopg)(void)
     Py_TYPE(&qstringType)    = &PyType_Type;
     Py_TYPE(&binaryType)     = &PyType_Type;
     Py_TYPE(&isqlquoteType)  = &PyType_Type;
-    Py_TYPE(&bsqlquoteType)  = &PyType_Type;
+    Py_TYPE(&isqlparamType)  = &PyType_Type;
     Py_TYPE(&pbooleanType)   = &PyType_Type;
     Py_TYPE(&pintType)       = &PyType_Type;
     Py_TYPE(&pfloatType)     = &PyType_Type;
@@ -887,7 +887,7 @@ INIT_MODULE(_psycopg)(void)
     if (PyType_Ready(&qstringType) == -1) goto exit;
     if (PyType_Ready(&binaryType) == -1) goto exit;
     if (PyType_Ready(&isqlquoteType) == -1) goto exit;
-    if (PyType_Ready(&bsqlquoteType) == -1) goto exit;
+    if (PyType_Ready(&isqlparamType) == -1) goto exit;
     if (PyType_Ready(&pbooleanType) == -1) goto exit;
     if (PyType_Ready(&pintType) == -1) goto exit;
     if (PyType_Ready(&pfloatType) == -1) goto exit;
@@ -985,7 +985,7 @@ INIT_MODULE(_psycopg)(void)
     PyModule_AddObject(module, "cursor", (PyObject*)&cursorType);
     PyModule_AddObject(module, "cursor_bin", (PyObject*)&cursorBinType);
     PyModule_AddObject(module, "ISQLQuote", (PyObject*)&isqlquoteType);
-    PyModule_AddObject(module, "BSQLQuote", (PyObject*)&bsqlquoteType);
+    PyModule_AddObject(module, "ISQLParam", (PyObject*)&isqlparamType);
     PyModule_AddObject(module, "Notify", (PyObject*)&NotifyType);
     PyModule_AddObject(module, "Xid", (PyObject*)&XidType);
 #ifdef PSYCOPG_EXTENSIONS
@@ -1022,7 +1022,7 @@ INIT_MODULE(_psycopg)(void)
     cursorBinType.tp_alloc = PyType_GenericAlloc;
     binaryType.tp_alloc = PyType_GenericAlloc;
     isqlquoteType.tp_alloc = PyType_GenericAlloc;
-    bsqlquoteType.tp_alloc = PyType_GenericAlloc;
+    isqlparamType.tp_alloc = PyType_GenericAlloc;
     pbooleanType.tp_alloc = PyType_GenericAlloc;
     pintType.tp_alloc = PyType_GenericAlloc;
     pfloatType.tp_alloc = PyType_GenericAlloc;

@@ -24,8 +24,8 @@
  * License for more details.
  */
 
-#ifndef PSYCOPG_BSQLQUOTE_H
-#define PSYCOPG_BSQLQUOTE_H 1
+#ifndef PSYCOPG_ISQLPARAM_H
+#define PSYCOPG_ISQLPARAM_H 1
 
 #ifdef __cplusplus
 extern "C" {
@@ -57,7 +57,7 @@ typedef struct {
 	psyco_py2bin   convFn;
 } microprotocols_py2bin;
 
-extern HIDDEN PyTypeObject bsqlquoteType;
+extern HIDDEN PyTypeObject isqlparamType;
 
 /** register a fn for python->pg-bin conversion */
 HIDDEN int microprotocols_addbin(PyTypeObject * pyType, psyco_checkfn checkFn,
@@ -73,10 +73,10 @@ typedef struct {
 
     PyObject *wrapped;
 
-} bsqlquoteObject;
+} isqlparamObject;
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* !defined(PSYCOPG_BSQLQUOTE_H) */
+#endif /* !defined(PSYCOPG_ISQLPARAM_H) */

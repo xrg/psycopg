@@ -40,11 +40,11 @@
 
 /* getquoted - return quoted representation for object */
 
-#define psyco_bsqlquote_getraw_doc \
-"getraw() -- return SQL-raw representation of this object" /*-*/
+#define psyco_isqlparam_getraw_doc \
+"getraw() -- return SQL-buffer representation of this object"
 
 static PyObject *
-psyco_bsqlquote_getraw(bsqlquoteObject *self, PyObject *args)
+psyco_isqlparam_getraw(isqlparamObject *self, PyObject *args)
 {
     Py_INCREF(Py_None);
     return Py_None;
@@ -52,55 +52,55 @@ psyco_bsqlquote_getraw(bsqlquoteObject *self, PyObject *args)
 
 /* getbinary - return quoted representation for object */
 
-#define psyco_bsqlquote_getraw_oid_doc \
+#define psyco_isqlparam_getraw_oid_doc \
 "getbinary() -- return SQL-quoted binary representation of this object"
 
 static PyObject *
-psyco_bsqlquote_getraw_oid(bsqlquoteObject *self, PyObject *args)
+psyco_isqlparam_getraw_oid(isqlparamObject *self, PyObject *args)
 {
     Py_INCREF(Py_False);
     return Py_False;
 }
 
-#define psyco_bsqlquote_getbuffer_doc \
+#define psyco_isqlparam_getbuffer_doc \
 "getbuffer() -- return this object"
 
 static PyObject *
-psyco_bsqlquote_getbuffer(bsqlquoteObject *self, PyObject *args)
+psyco_isqlparam_getbuffer(isqlparamObject *self, PyObject *args)
 {
     Py_INCREF(Py_None);
     return Py_None;
 }
 
-/** the BSQLQuote object **/
+/** the ISQLParam object **/
 
 
 /* object method list */
 
-static struct PyMethodDef bsqlquoteObject_methods[] = {
-    {"getraw", (PyCFunction)psyco_bsqlquote_getraw,
-     METH_NOARGS, psyco_bsqlquote_getraw_doc},
-    {"getraw_oid", (PyCFunction)psyco_bsqlquote_getraw_oid,
-     METH_NOARGS, psyco_bsqlquote_getraw_oid_doc},
-    {"getbuffer", (PyCFunction)psyco_bsqlquote_getbuffer,
-     METH_NOARGS, psyco_bsqlquote_getbuffer_doc},
-    /*    {"prepare", (PyCFunction)psyco_bsqlquote_prepare,
-          METH_VARARGS, psyco_bsqlquote_prepare_doc}, */
+static struct PyMethodDef isqlparamObject_methods[] = {
+    {"getraw", (PyCFunction)psyco_isqlparam_getraw,
+     METH_NOARGS, psyco_isqlparam_getraw_doc},
+    {"getraw_oid", (PyCFunction)psyco_isqlparam_getraw_oid,
+     METH_NOARGS, psyco_isqlparam_getraw_oid_doc},
+    {"getbuffer", (PyCFunction)psyco_isqlparam_getbuffer,
+     METH_NOARGS, psyco_isqlparam_getbuffer_doc},
+    /*    {"prepare", (PyCFunction)psyco_isqlparam_prepare,
+          METH_VARARGS, psyco_isqlparam_prepare_doc}, */
     {NULL}
 };
 
 /* object member list */
 
-static struct PyMemberDef bsqlquoteObject_members[] = {
+static struct PyMemberDef isqlparamObject_members[] = {
     /* DBAPI-2.0 extensions (exception objects) */
-    {"_wrapped", T_OBJECT, offsetof(bsqlquoteObject, wrapped), READONLY},
+    {"_wrapped", T_OBJECT, offsetof(isqlparamObject, wrapped), READONLY},
     {NULL}
 };
 
 /* initialization and finalization methods */
 
 static int
-bsqlquote_setup(bsqlquoteObject *self, PyObject *wrapped)
+isqlparam_setup(isqlparamObject *self, PyObject *wrapped)
 {
     self->wrapped = wrapped;
     Py_INCREF(wrapped);
@@ -109,9 +109,9 @@ bsqlquote_setup(bsqlquoteObject *self, PyObject *wrapped)
 }
 
 static void
-bsqlquote_dealloc(PyObject* obj)
+isqlparam_dealloc(PyObject* obj)
 {
-    bsqlquoteObject *self = (bsqlquoteObject *)obj;
+    isqlparamObject *self = (isqlparamObject *)obj;
 
     Py_XDECREF(self->wrapped);
 
@@ -119,24 +119,24 @@ bsqlquote_dealloc(PyObject* obj)
 }
 
 static int
-bsqlquote_init(PyObject *obj, PyObject *args, PyObject *kwds)
+isqlparam_init(PyObject *obj, PyObject *args, PyObject *kwds)
 {
     PyObject *wrapped = NULL;
 
     if (!PyArg_ParseTuple(args, "O", &wrapped))
         return -1;
 
-    return bsqlquote_setup((bsqlquoteObject *)obj, wrapped);
+    return isqlparam_setup((isqlparamObject *)obj, wrapped);
 }
 
 static PyObject *
-bsqlquote_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
+isqlparam_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
 {
     return type->tp_alloc(type, 0);
 }
 
 static void
-bsqlquote_del(PyObject* self)
+isqlparam_del(PyObject* self)
 {
     PyObject_Del(self);
 }
@@ -144,17 +144,17 @@ bsqlquote_del(PyObject* self)
 
 /* object type */
 
-#define bsqlquoteType_doc \
-"Abstract BSQLQuote protocol\n\n" \
+#define isqlparamType_doc \
+"Abstract ISQLParam protocol\n\n" \
 "An object conform to this protocol should expose a ``getraw()`` method\n" \
 "returning the SQL binary representation of the object.\n\n"
 
-PyTypeObject bsqlquoteType = {
+PyTypeObject isqlparamType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "psycopg2._psycopg.BSQLQuote",
-    sizeof(bsqlquoteObject),
+    "psycopg2._psycopg.ISQLParam",
+    sizeof(isqlparamObject),
     0,
-    bsqlquote_dealloc, /*tp_dealloc*/
+    isqlparam_dealloc, /*tp_dealloc*/
     0,          /*tp_print*/
     0,          /*tp_getattr*/
     0,          /*tp_setattr*/
@@ -172,7 +172,7 @@ PyTypeObject bsqlquoteType = {
     0,          /*tp_as_buffer*/
 
     Py_TPFLAGS_DEFAULT|Py_TPFLAGS_BASETYPE, /*tp_flags*/
-    bsqlquoteType_doc, /*tp_doc*/
+    isqlparamType_doc, /*tp_doc*/
 
     0,          /*tp_traverse*/
     0,          /*tp_clear*/
@@ -185,8 +185,8 @@ PyTypeObject bsqlquoteType = {
 
     /* Attribute descriptor and subclassing stuff */
 
-    bsqlquoteObject_methods, /*tp_methods*/
-    bsqlquoteObject_members, /*tp_members*/
+    isqlparamObject_methods, /*tp_methods*/
+    isqlparamObject_members, /*tp_members*/
     0,          /*tp_getset*/
     0,          /*tp_base*/
     0,          /*tp_dict*/
@@ -195,10 +195,10 @@ PyTypeObject bsqlquoteType = {
     0,          /*tp_descr_set*/
     0,          /*tp_dictoffset*/
 
-    bsqlquote_init, /*tp_init*/
+    isqlparam_init, /*tp_init*/
     0, /*tp_alloc  will be set to PyType_GenericAlloc in module init*/
-    bsqlquote_new, /*tp_new*/
-    (freefunc)bsqlquote_del, /*tp_free  Low-level free-memory routine */
+    isqlparam_new, /*tp_new*/
+    (freefunc)isqlparam_del, /*tp_free  Low-level free-memory routine */
     0,          /*tp_is_gc For PyObject_IS_GC */
     0,          /*tp_bases*/
     0,          /*tp_mro method resolution order */
@@ -336,7 +336,7 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
         }
     
     tmp = microprotocols_adapt(
-        obj, (PyObject*)&bsqlquoteType, NULL);
+        obj, (PyObject*)&isqlparamType, NULL);
 
     if (tmp != NULL) {
         Dprintf("microprotocol_getquoted: adapted %s to %s",
