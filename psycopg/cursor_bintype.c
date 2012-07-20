@@ -158,7 +158,7 @@ int resize_charbuf(char** buf, char** rptr,
 
 /* mogrify a query string and build argument array or dict */
 static int
-_mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn, 
+_mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor, 
         struct pq_exec_args *pargs)
 {
     PyObject *key, *value, *item;
@@ -203,7 +203,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
         */
             /* check if some crazy guy mixed formats */
             if (kind && (kind != 1)) {
-                psyco_set_error(ProgrammingError, (PyObject*)conn,
+                psyco_set_error(ProgrammingError, cursor,
                    "argument formats can't be mixed", NULL, NULL);
                 return -1;
             }
@@ -226,7 +226,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
 
             /* check if some crazy guy mixed formats */
             if (kind && (kind != 2)) {
-                psyco_set_error(ProgrammingError, (PyObject*)conn,
+                psyco_set_error(ProgrammingError, cursor,
                   "argument formats can't be mixed", NULL, NULL);
                 return -1;
             }
@@ -244,7 +244,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
         else if (c[0] == '$' && c[1] != '$') {
             /* check if some crazy guy mixed formats */
             if (kind > 0) {
-                psyco_set_error(ProgrammingError, (PyObject*)conn,
+                psyco_set_error(ProgrammingError, cursor,
                   "SQL $x parameters are not allowed in parameter queries", NULL, NULL);
                 return -1;
             }
@@ -313,7 +313,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
 
                 if (*d) d++; /* skip the 's' character */
 
-                if ((ri = microprotocol_addparams(value, conn, pargs, oindex, &nbuf, &nlen)) < 0){
+                if ((ri = microprotocol_addparams(value, cursor->conn, pargs, oindex, &nbuf, &nlen)) < 0){
                         Py_XDECREF(value);
                         PyMem_Free(rs_begin);
                         return ri;
@@ -378,7 +378,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
 
             if (*d) d++; /* skip the 's' character */
 
-            if ((ri = microprotocol_addparams(value, conn, pargs, oindex, &nbuf, &nlen)) < 0){
+            if ((ri = microprotocol_addparams(value, cursor->conn, pargs, oindex, &nbuf, &nlen)) < 0){
                 Py_XDECREF(value);
                 return ri;
             }else{
@@ -431,8 +431,11 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, connectionObject *conn,
 
 #define HAVE_EXECPARAMS 1
 
+#define psyco_bincurs_execute_doc \
+"execute(query, vars=None) -- Execute query with bound vars. Uses the binary protocol to talk to pg backend."
+
 static int
-_psyco_curs_execute2(cursorObject *self,
+_psyco_bincurs_execute(cursorObject *self,
                     PyObject *operation, PyObject *vars, long int async)
 {
     int res = 0, mres = 0;
@@ -464,7 +467,7 @@ _psyco_curs_execute2(cursorObject *self,
     if (vars && vars != Py_None)
     {
 #ifdef HAVE_EXECPARAMS
-        if ((mres = _mogrify_execparams(vars, operation, self->conn, &pargs)) == -1) 
+        if ((mres = _mogrify_execparams(vars, operation, self, &pargs)) == -1) 
             goto fail;
         else if (mres == -2){ /* retry the old way */
             Dprintf("Fallback to the old pq_execute code");
@@ -476,7 +479,7 @@ _psyco_curs_execute2(cursorObject *self,
 #else /* no EXECPARAMS */
         if (1) {
 #endif
-            if(_mogrify(vars, operation, self->conn, &cvt) == -1) {
+            if(_mogrify(vars, operation, self, &cvt) == -1) {
                 goto fail;
             }
         }
@@ -516,8 +519,7 @@ _psyco_curs_execute2(cursorObject *self,
                     if (!strcmp(s, "not enough arguments for format string")
                       || !strcmp(s, "not all arguments converted")) {
                         Dprintf("psyco_curs_execute:     -> got a match");
-                        psyco_set_error(ProgrammingError, (PyObject*)self,
-                                         s, NULL, NULL);
+                        psyco_set_error(ProgrammingError, self, s, NULL, NULL);
                         pe = 1;
                     }
 
@@ -587,3 +589,114 @@ _psyco_curs_execute2(cursorObject *self,
 
         return res;
 }
+
+static PyObject *
+psyco_bincurs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
+{
+    PyObject *vars = NULL, *operation = NULL;
+
+    static char *kwlist[] = {"query", "vars", NULL};
+
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O|O", kwlist,
+                                     &operation, &vars)) {
+        return NULL;
+    }
+
+    if (self->name != NULL) {
+        if (self->query != Py_None) {
+            psyco_set_error(ProgrammingError, self,
+                "can't call .execute() on named cursors more than once",
+                NULL, NULL);
+            return NULL;
+        }
+        if (self->conn->autocommit) {
+            psyco_set_error(ProgrammingError, self,
+                "can't use a named cursor outside of transactions", NULL, NULL);
+            return NULL;
+        }
+        EXC_IF_NO_MARK(self);
+    }
+
+    EXC_IF_CURS_CLOSED(self);
+    EXC_IF_ASYNC_IN_PROGRESS(self, execute);
+    EXC_IF_TPC_PREPARED(self->conn, execute);
+
+    if (_psyco_bincurs_execute(self, operation, vars, self->conn->async) < 0) {
+        return NULL;
+    }
+
+    /* success */
+    Py_INCREF(Py_None);
+    return Py_None;
+}
+
+static struct PyMethodDef cursorBinObject_methods[] = {
+    /* DBAPI-2.0 core */
+    {"execute", (PyCFunction)psyco_bincurs_execute,
+     METH_VARARGS|METH_KEYWORDS, psyco_bincurs_execute_doc},
+     {NULL}
+};
+
+/* object type */
+
+#define cursorBinType_doc \
+"A Postgres database cursor that uses the binary protocol."
+
+PyTypeObject cursorBinType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    "psycopg2._psycopg.cursor_bin",
+    sizeof(cursorObject),
+    0,
+    0,          /*tp_dealloc*/
+    0,          /*tp_print*/
+    0,          /*tp_getattr*/
+    0,          /*tp_setattr*/
+    0,          /*tp_compare*/
+    0,          /*tp_repr*/
+    0,          /*tp_as_number*/
+    0,          /*tp_as_sequence*/
+    0,          /*tp_as_mapping*/
+    0,          /*tp_hash */
+
+    0,          /*tp_call*/
+    0,          /*tp_str*/
+    0,          /*tp_getattro*/
+    0,          /*tp_setattro*/
+    0,          /*tp_as_buffer*/
+
+    Py_TPFLAGS_DEFAULT | Py_TPFLAGS_BASETYPE,
+                /*tp_flags*/
+    cursorBinType_doc, /*tp_doc*/
+
+    0,          /*tp_traverse*/
+    0,          /*tp_clear*/
+
+    0,          /*tp_richcompare*/
+    0,         /*tp_weaklistoffset*/
+
+    0, /*tp_iter*/
+    0, /*tp_iternext*/
+
+    /* Attribute descriptor and subclassing stuff */
+
+    cursorBinObject_methods, /*tp_methods*/
+    0,          /*tp_members*/
+    0,          /*tp_getset*/
+    &cursorType, /*tp_base*/
+    0,          /*tp_dict*/
+
+    0,          /*tp_descr_get*/
+    0,          /*tp_descr_set*/
+    0,          /*tp_dictoffset*/
+
+    0, /*tp_init*/
+    0, /*tp_alloc  Will be set to PyType_GenericAlloc in module init*/
+    0, /*tp_new*/
+    0, /*tp_free  Low-level free-memory routine */
+    0,          /*tp_is_gc For PyObject_IS_GC */
+    0,          /*tp_bases*/
+    0,          /*tp_mro method resolution order */
+    0,          /*tp_cache*/
+    0,          /*tp_subclasses*/
+    0           /*tp_weaklist*/
+};

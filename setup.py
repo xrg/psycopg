@@ -423,7 +423,7 @@ sources = [
     'green.c', 'pqpath.c', 'utils.c', 'bytes_format.c',
 
     'connection_int.c', 'connection_type.c',
-    'cursor_int.c', 'cursor_type.c',
+    'cursor_int.c', 'cursor_type.c', 'cursor_bintype.c',
     'lobject_int.c', 'lobject_type.c',
     'notify_type.c', 'xid_type.c',
 
@@ -431,6 +431,7 @@ sources = [
     'adapter_list.c', 'adapter_pboolean.c', 'adapter_pdecimal.c',
     'adapter_pint.c', 'adapter_pfloat.c', 'adapter_qstring.c',
     'microprotocols.c', 'microprotocols_proto.c',
+    'microprotocols_binproto.c',
     'typecast.c',
 ]
 
