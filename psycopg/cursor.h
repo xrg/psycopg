@@ -84,6 +84,8 @@ struct cursorObject {
 
 };
 
+HIDDEN PyObject *_psyco_curs_validate_sql_basic(cursorObject *self, PyObject *sql);
+HIDDEN int _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject **new);
 
 /* C-callable functions in cursor_int.c and cursor_ext.c */
 BORROWED HIDDEN PyObject *curs_get_cast(cursorObject *self, PyObject *oid);

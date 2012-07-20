@@ -79,7 +79,7 @@ exit:
 
 /* mogrify a query string and build argument array or dict */
 
-RAISES_NEG static int
+RAISES_NEG int
 _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject **new)
 {
     PyObject *key, *value, *n;
@@ -257,7 +257,7 @@ _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject **new)
     return 0;
 }
 
-static PyObject *_psyco_curs_validate_sql_basic(
+PyObject *_psyco_curs_validate_sql_basic(
     cursorObject *self, PyObject *sql
   )
 {
