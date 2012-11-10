@@ -314,6 +314,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
                 if ((ri = microprotocol_addparams(value, cursor->conn, pargs, oindex, &nbuf, &nlen)) < 0){
                         Py_XDECREF(value);
                         PyMem_Free(rs_begin);
+                        Dprintf("_mogrify_execparams: got %d from microprotocol_addparams", ri);
                         return ri;
                 }else{
                     if ((d-c) > 2)
@@ -377,6 +378,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
             if (*d) d++; /* skip the 's' character */
 
             if ((ri = microprotocol_addparams(value, cursor->conn, pargs, oindex, &nbuf, &nlen)) < 0){
+                Dprintf("_mogrify_execparams: returned %d from microprotocol_addparams", ri);
                 Py_XDECREF(value);
                 return ri;
             }else{

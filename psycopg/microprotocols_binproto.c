@@ -295,7 +295,6 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
     Py_ssize_t len;
     microprotocols_py2bin *p2b;
     
-    
     if (obj == Py_None){
         pargs->paramValues[index] = NULL;
         pargs->paramLengths[index] = 0;
@@ -338,8 +337,15 @@ microprotocol_addparams(PyObject *obj, connectionObject *conn,
     tmp = microprotocols_adapt(
         obj, (PyObject*)&isqlparamType, NULL);
 
-    if (tmp != NULL) {
-        Dprintf("microprotocol_getquoted: adapted %s to %s",
+    if (tmp == NULL){
+        if (PyErr_Occurred() && PyErr_ExceptionMatches(ProgrammingError)){
+            PyErr_Clear();
+            Dprintf("microprotocol_addparams: can't adapt %s to ISQLParam",obj->ob_type->tp_name);
+            return -2;
+        } else
+            return -1; /* propagate the error */
+    } else {
+        Dprintf("microprotocol_addparams: adapted %s to %s",
                 obj->ob_type->tp_name, tmp->ob_type->tp_name);
 
         /* if requested prepare the object passing it the connection */
