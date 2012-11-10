@@ -179,11 +179,9 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
     int nlen = 0;
     
     c = c_begin = PyString_AsString(fmt);
-    if (!strncasecmp(c, "comment ", 8))
-        return -2; /* that one doesn't like pq_execparams */
-
-    if (!strncasecmp(c, "execute ", 8))
-        return -2; /* that one doesn't like pq_execparams FIXME */
+    if ( (!strncasecmp(c, "comment ", 8)) || (!strncasecmp(c, "execute ", 8))
+            || (!strncasecmp(c, "set ", 4)))
+        return -2; /* these commands are not working through pq_execparams */
 
     /* First pass: scan the query string for number of arguments, kind
        of format (dict or sequence) and length of pq-formatted query string.
