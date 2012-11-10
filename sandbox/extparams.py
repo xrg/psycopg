@@ -45,6 +45,8 @@ platlib = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'build',
 if os.path.exists(platlib) and not options.old_proto:
     print "Get psycopg2 from ", platlib
     sys.path.insert(0, platlib)
+else:
+    print "note: platform lib is not at ", platlib
 
 import psycopg2
 
@@ -73,6 +75,7 @@ conn = psycopg2.connect(dsn)
 print 'Connection established'
 if options.bin_proto:
     cr = psycopg2.extensions.cursor_bin(conn)
+    print "Using a binary cursor"
 else:
     cr = conn.cursor()
 
@@ -85,13 +88,31 @@ if options.regulars:
     cr.execute("SELECT %s;   	", (1,))
     print cr.fetchall()
 
+    def testDatetime():
+        import datetime
+        now = datetime.datetime.now()
+        
+        cr.execute("SELECT %s", (now,))
+        print cr.fetchall()
+        
+        cr.execute("SELECT date_trunc('day',  %s::timestamp);", ('2012-11-10 13:30:01',))
+        print cr.fetchall()
+
     def testUUIDARRAY():
         import uuid
         import psycopg2.extras
         psycopg2.extras.register_uuid()
         u = [uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e350'), uuid.UUID('9c6d5a77-7256-457e-9461-347b4358e352')]
+        cr.execute("SELECT %s AS foo", (u[0],))
+        print cr.fetchall()
         cr.execute("SELECT %s AS foo", (u,))
         print cr.fetchall()
+    
+    def testDictFetch():
+        cr.row_factory = lambda self: dict()
+        cr.execute('''SELECT '1' AS a, '2' AS b, 'For' as "for";''')
+        print cr.fetchall()
+        cr.row_factory = None
 
     try:
         print "Multi cmds:"
@@ -108,9 +129,9 @@ if options.regulars:
     cr.execute(qry, args)
     print "Result:", cr.fetchall()
     
-    #cr.execute('SELECT %s::TEXT, %s::INTEGER, %s::TEXT, %s::INTERVAL ;',
-    #        (None, AsIs(1), AsIs('NULL'), AsIs("'1 hour'")))
-    # print "Result 2:", cr.fetchall()
+    cr.execute('SELECT %s::TEXT, %s::INTEGER, %s::TEXT, %s::INTERVAL ;',
+           (None, AsIs(1), AsIs('NULL'), AsIs("'1 hour'")))
+    print "Result 2:", cr.fetchall()
     
     cr.execute('SELECT %s', ([ 1, 2, 3, 4 ],))
     print "Result 3:", cr.fetchall()
@@ -132,7 +153,11 @@ if options.regulars:
     
     cr.execute('EXECUTE psycopg2_prep(%s);', ('foo',))
     print "Execute returns:", cr.fetchall()
+    
+    testDatetime()
+    
     testUUIDARRAY()
+    # testDictFetch() - needs C patch
 
 if options.stress:
     ran = []
