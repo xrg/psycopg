@@ -666,11 +666,11 @@ _psyco_curs_prefetch(cursorObject *self)
 
 RAISES_NEG static int
 _psyco_curs_buildrow_fill(cursorObject *self, PyObject *res,
-                          int row, int n, int istuple)
+                          int row, int n, PyObject* names)
 {
     int i, len, err;
     const char *str;
-    PyObject *val;
+    PyObject *val, *key;
     int rv = -1;
 
     for (i=0; i < n; i++) {
@@ -695,11 +695,17 @@ _psyco_curs_buildrow_fill(cursorObject *self, PyObject *res,
             FORMAT_CODE_PY_SSIZE_T,
             Py_REFCNT(val)
           );
-        if (istuple) {
+        if (names == Py_True) {
             PyTuple_SET_ITEM(res, i, val);
         }
-        else {
+        else if (names == Py_False) {
             err = PySequence_SetItem(res, i, val);
+            Py_DECREF(val);
+            if (err == -1) { goto exit; }
+        }
+        else {
+            key = PyTuple_GET_ITEM(names, i);
+            PyDict_SetItem(res, key, val);
             Py_DECREF(val);
             if (err == -1) { goto exit; }
         }
@@ -711,26 +717,67 @@ exit:
     return rv;
 }
 
+/** Prepare the tuple of column names, to use in dictfetch*() operations
+ *  @param n the number of columns we have
+ */
+static PyObject *_psyco_curs_prepare_names(cursorObject* self, int n){
+    PyObject *ret = PyTuple_New(n);
+    PyObject *dkey=NULL, *nkey=NULL;
+    int i;
+
+    if (!ret)
+        return ret;
+    for (i=0; i<n; i++){
+        dkey = PyTuple_GetItem(self->description, i); /* here we have the entire description */
+        if (!dkey) goto hell;
+        nkey = PySequence_GetItem(dkey, 0);
+            /* now we have the PyString name. Note that the "0" is hard-coded for name! */
+        if (!nkey) goto hell;
+        PyTuple_SET_ITEM(ret, i, nkey);
+    }
+    return ret;
+
+    hell:
+        Dprintf("_psyco_curs_prepare_names: failed to get some name: %d", i);
+        Py_XDECREF(ret);
+        return NULL;
+}
+
 static PyObject *
-_psyco_curs_buildrow(cursorObject *self, int row)
+_psyco_curs_buildrow(cursorObject *self, int row, PyObject **names)
 {
-    int n;
-    int istuple;
+    int n,i;
     PyObject *t = NULL;
     PyObject *rv = NULL;
+    PyObject *ournames = NULL;
 
     n = PQnfields(self->pgres);
-    istuple = (self->tuple_factory == Py_None);
 
-    if (istuple) {
+    if (self->tuple_factory == Py_None) {
+        ournames = Py_True;
         t = PyTuple_New(n);
     }
     else {
-        t = PyObject_CallFunctionObjArgs(self->tuple_factory, self, NULL);
+        if (self->tuple_factory == (PyObject*) &PyDict_Type) {
+            t = PyDict_New();
+        }
+        else
+            t = PyObject_CallFunctionObjArgs(self->tuple_factory, self, NULL);
+
+        if (t && t->ob_type == &PyDict_Type){
+            if (! *names){
+                (*names) = _psyco_curs_prepare_names(self, n);
+                /* the calling function is responsible of Py_DECREF(*names) */
+                if (! *names) goto exit;
+            }
+            ournames = *names;
+        }
+        else
+            ournames = Py_False;
     }
     if (!t) { goto exit; }
 
-    if (0 <= _psyco_curs_buildrow_fill(self, t, row, n, istuple)) {
+    if (0 <= _psyco_curs_buildrow_fill(self, t, row, n, ournames)) {
         rv = t;
         t = NULL;
     }
@@ -745,6 +792,7 @@ static PyObject *
 psyco_curs_fetchone(cursorObject *self, PyObject *args)
 {
     PyObject *res;
+    PyObject *names = NULL;
 
     EXC_IF_CURS_CLOSED(self);
     if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -770,7 +818,7 @@ psyco_curs_fetchone(cursorObject *self, PyObject *args)
         return Py_None;
     }
 
-    res = _psyco_curs_buildrow(self, self->row);
+    res = _psyco_curs_buildrow(self, self->row, &names);
     self->row++; /* move the counter to next line */
 
     /* if the query was async aggresively free pgres, to allow
@@ -780,6 +828,7 @@ psyco_curs_fetchone(cursorObject *self, PyObject *args)
         && PyWeakref_GetObject(self->conn->async_cursor) == (PyObject*)self)
         IFCLEARPGRES(self->pgres);
 
+    Py_XDECREF(names);
     return res;
 }
 
@@ -791,6 +840,7 @@ static PyObject *
 psyco_curs_next_named(cursorObject *self)
 {
     PyObject *res;
+    PyObject *names = NULL;
 
     Dprintf("psyco_curs_next_named");
     EXC_IF_CURS_CLOSED(self);
@@ -817,7 +867,7 @@ psyco_curs_next_named(cursorObject *self)
         return NULL;
     }
 
-    res = _psyco_curs_buildrow(self, self->row);
+    res = _psyco_curs_buildrow(self, self->row, &names);
     self->row++; /* move the counter to next line */
 
     /* if the query was async aggresively free pgres, to allow
@@ -827,6 +877,7 @@ psyco_curs_next_named(cursorObject *self)
         && PyWeakref_GetObject(self->conn->async_cursor) == (PyObject*)self)
         IFCLEARPGRES(self->pgres);
 
+    Py_XDECREF(names);
     return res;
 }
 
@@ -847,6 +898,7 @@ psyco_curs_fetchmany(cursorObject *self, PyObject *args, PyObject *kwords)
     PyObject *list = NULL;
     PyObject *row = NULL;
     PyObject *rv = NULL;
+    PyObject *names = NULL;
 
     PyObject *pysize = NULL;
     long int size = self->arraysize;
@@ -896,7 +948,7 @@ psyco_curs_fetchmany(cursorObject *self, PyObject *args, PyObject *kwords)
     if (!(list = PyList_New(size))) { goto exit; }
 
     for (i = 0; i < size; i++) {
-        row = _psyco_curs_buildrow(self, self->row);
+        row = _psyco_curs_buildrow(self, self->row, &names);
         self->row++;
 
         if (row == NULL) { goto exit; }
@@ -919,6 +971,7 @@ psyco_curs_fetchmany(cursorObject *self, PyObject *args, PyObject *kwords)
 exit:
     Py_XDECREF(list);
     Py_XDECREF(row);
+    Py_XDECREF(names);
 
     return rv;
 }
@@ -940,6 +993,7 @@ psyco_curs_fetchall(cursorObject *self, PyObject *args)
     PyObject *list = NULL;
     PyObject *row = NULL;
     PyObject *rv = NULL;
+    PyObject *names = NULL;
 
     EXC_IF_CURS_CLOSED(self);
     if (_psyco_curs_prefetch(self) < 0) return NULL;
@@ -966,7 +1020,7 @@ psyco_curs_fetchall(cursorObject *self, PyObject *args)
     if (!(list = PyList_New(size))) { goto exit; }
 
     for (i = 0; i < size; i++) {
-        row = _psyco_curs_buildrow(self, self->row);
+        row = _psyco_curs_buildrow(self, self->row, &names);
         self->row++;
         if (row == NULL) { goto exit; }
 
@@ -988,6 +1042,7 @@ psyco_curs_fetchall(cursorObject *self, PyObject *args)
 exit:
     Py_XDECREF(list);
     Py_XDECREF(row);
+    Py_XDECREF(names);
 
     return rv;
 }
