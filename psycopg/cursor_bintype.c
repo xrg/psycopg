@@ -179,8 +179,8 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
     int nlen = 0;
     
     c = c_begin = PyString_AsString(fmt);
-    if ( (!strncasecmp(c, "comment ", 8)) || (!strncasecmp(c, "execute ", 8))
-            || (!strncasecmp(c, "set ", 4)))
+    if ( !( (!strncasecmp(c, "select ", 7)) || (!strncasecmp(c, "insert ", 7))
+            || (!strncasecmp(c, "update ", 7)) || (!strncasecmp(c, "delete ", 7)) ))
         return -2; /* these commands are not working through pq_execparams */
 
     /* First pass: scan the query string for number of arguments, kind
