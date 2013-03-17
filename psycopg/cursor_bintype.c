@@ -434,7 +434,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
 #define psyco_bincurs_execute_doc \
 "execute(query, vars=None) -- Execute query with bound vars. Uses the binary protocol to talk to pg backend."
 
-static int
+RAISES_NEG static int
 _psyco_bincurs_execute(cursorObject *self,
                     PyObject *operation, PyObject *vars, long int async)
 {
@@ -576,7 +576,7 @@ _psyco_bincurs_execute(cursorObject *self,
     goto cleanup;
 
     fail:
-        res = 0;
+        res = -1;
         /* Fall through to cleanup */
     cleanup:
         /* Py_XDECREF(operation) is safe because the original reference passed
