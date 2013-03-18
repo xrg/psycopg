@@ -458,7 +458,7 @@ _psyco_bincurs_execute(cursorObject *self,
         self->query = NULL;
     }
 
-    Dprintf("psyco_curs_execute: starting execution of new query");
+    Dprintf("psyco_bincurs_execute: starting execution of new query");
 
     /* here we are, and we have a sequence or a dictionary filled with
        objects to be substituted (bound variables). we try to be smart and do
@@ -506,7 +506,7 @@ _psyco_bincurs_execute(cursorObject *self,
             PyErr_Fetch(&err, &arg, &trace);
 
             if (err && PyErr_GivenExceptionMatches(err, PyExc_TypeError)) {
-                Dprintf("psyco_curs_execute: TypeError exception catched");
+                Dprintf("psyco_bincurs_execute: TypeError exception catched");
                 PyErr_NormalizeException(&err, &arg, &trace);
 
                 if (PyObject_HasAttrString(arg, "args")) {
@@ -514,11 +514,11 @@ _psyco_bincurs_execute(cursorObject *self,
                     PyObject *str = PySequence_GetItem(args, 0);
                     const char *s = PyString_AS_STRING(str);
 
-                    Dprintf("psyco_curs_execute:     -> %s", s);
+                    Dprintf("psyco_bincurs_execute:     -> %s", s);
 
                     if (!strcmp(s, "not enough arguments for format string")
                       || !strcmp(s, "not all arguments converted")) {
-                        Dprintf("psyco_curs_execute:     -> got a match");
+                        Dprintf("psyco_bincurs_execute:     -> got a match");
                         psyco_set_error(ProgrammingError, self, s, NULL, NULL);
                         pe = 1;
                     }
@@ -569,7 +569,7 @@ _psyco_bincurs_execute(cursorObject *self,
         res = pq_execute_params(self, &pargs, async, 0);
     else
         res = pq_execute(self, PyString_AS_STRING(self->query), async, 0);
-    Dprintf("psyco_curs_execute: res = %d, pgres = %p", res, self->pgres);
+    Dprintf("psyco_bincurs_execute: res = %d, pgres = %p", res, self->pgres);
     if (res == -1) { goto fail; }
 
     res = 1; /* Success */
