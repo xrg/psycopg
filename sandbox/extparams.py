@@ -145,8 +145,8 @@ if options.regulars:
     cr.execute('SELECT a FROM generate_series(1, 10) AS a WHERE a IN %s', ((1,2,3),))
     print "Result 6:", cr.fetchall()
     
-    cr.execute('COMMENT ON COLUMN test_tpc.data IS %s', ('bar',))
-    print "Comment done"
+    #cr.execute('COMMENT ON COLUMN test_tpc.data IS %s', ('bar',))
+    #print "Comment done"
     
     cr.execute('PREPARE psycopg2_prep(UNKNOWN) AS SELECT $1::VARCHAR ;')
     print "Prepared psycopg2_prep"
