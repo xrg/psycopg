@@ -202,7 +202,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
             /* check if some crazy guy mixed formats */
             if (kind && (kind != 1)) {
                 psyco_set_error(ProgrammingError, cursor,
-                   "argument formats can't be mixed", NULL, NULL);
+                   "argument formats can't be mixed");
                 return -1;
             }
             kind = 1;
@@ -225,7 +225,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
             /* check if some crazy guy mixed formats */
             if (kind && (kind != 2)) {
                 psyco_set_error(ProgrammingError, cursor,
-                  "argument formats can't be mixed", NULL, NULL);
+                  "argument formats can't be mixed");
                 return -1;
             }
             kind = 2;
@@ -243,7 +243,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
             /* check if some crazy guy mixed formats */
             if (kind > 0) {
                 psyco_set_error(ProgrammingError, cursor,
-                  "SQL $x parameters are not allowed in parameter queries", NULL, NULL);
+                  "SQL $x parameters are not allowed in parameter queries");
                 return -1;
             }
             kind = 3;
@@ -327,7 +327,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
                     }
                     
                     if (resize_charbuf(&rs_begin, &rs, cmdlen, &cmd_alloc) == -1){
-                        psyco_set_error(InternalError, NULL, NULL, NULL, NULL);
+                        psyco_set_error(InternalError, NULL, NULL);
                         Py_XDECREF(value);
                         PyMem_Free(rs_begin);
                         return -1;
@@ -392,7 +392,7 @@ _mogrify_execparams(PyObject *var, PyObject *fmt, cursorObject* cursor,
                 }
                 
                 if (resize_charbuf(&rs_begin, &rs, cmdlen, &cmd_alloc) == -1){
-                    psyco_set_error(InternalError, NULL, NULL, NULL, NULL);
+                    psyco_set_error(InternalError, NULL, NULL);
                     Py_XDECREF(value);
                     PyMem_Free(rs_begin);
                     return -1;
@@ -451,7 +451,7 @@ _psyco_bincurs_execute(cursorObject *self,
 
     if (operation == NULL) { goto fail; }
 
-    IFCLEARPGRES(self->pgres);
+    CLEARPGRES(self->pgres);
 
     if (self->query) {
         Py_DECREF(self->query);
@@ -519,7 +519,7 @@ _psyco_bincurs_execute(cursorObject *self,
                     if (!strcmp(s, "not enough arguments for format string")
                       || !strcmp(s, "not all arguments converted")) {
                         Dprintf("psyco_bincurs_execute:     -> got a match");
-                        psyco_set_error(ProgrammingError, self, s, NULL, NULL);
+                        psyco_set_error(ProgrammingError, self, s);
                         pe = 1;
                     }
 
@@ -605,13 +605,12 @@ psyco_bincurs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
     if (self->name != NULL) {
         if (self->query != Py_None) {
             psyco_set_error(ProgrammingError, self,
-                "can't call .execute() on named cursors more than once",
-                NULL, NULL);
+                "can't call .execute() on named cursors more than once");
             return NULL;
         }
         if (self->conn->autocommit) {
             psyco_set_error(ProgrammingError, self,
-                "can't use a named cursor outside of transactions", NULL, NULL);
+                "can't use a named cursor outside of transactions");
             return NULL;
         }
         EXC_IF_NO_MARK(self);

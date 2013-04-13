@@ -27,30 +27,6 @@ This module implements thread-safe (and not) connection pools.
 import psycopg2
 import psycopg2.extensions as _ext
 
-try:
-    import logging
-    # create logger object for psycopg2 module and sub-modules
-    _logger = logging.getLogger("psycopg2")
-    def dbg(*args):
-        _logger.debug("psycopg2", ' '.join([str(x) for x in args]))
-    try:
-        import App # does this make sure that we're running in Zope?
-        _logger.info("installed. Logging using Python logging module")
-    except:
-        _logger.debug("installed. Logging using Python logging module")
-    
-except ImportError:
-    from zLOG import LOG, DEBUG, INFO
-    def dbg(*args):
-        LOG('ZPsycopgDA',  DEBUG, "",
-            ' '.join([str(x) for x in args])+'\n')
-    LOG('ZPsycopgDA', INFO, "Installed", "Logging using Zope's zLOG\n") 
-
-except:
-    import sys
-    def dbg(*args):
-        sys.stderr.write(' '.join(args)+'\n')
-
 
 class PoolError(psycopg2.Error):
     pass
@@ -64,12 +40,12 @@ class AbstractConnectionPool(object):
 
         New 'minconn' connections are created immediately calling 'connfunc'
         with given parameters. The connection pool will support a maximum of
-        about 'maxconn' connections.        
+        about 'maxconn' connections.
         """
         self.minconn = minconn
         self.maxconn = maxconn
         self.closed = False
-        
+
         self._args = args
         self._kwargs = kwargs
 
@@ -95,12 +71,12 @@ class AbstractConnectionPool(object):
         """Return a new unique key."""
         self._keys += 1
         return self._keys
-            
+
     def _getconn(self, key=None):
         """Get a free connection and assign it to 'key' if not None."""
         if self.closed: raise PoolError("connection pool is closed")
         if key is None: key = self._getkey()
-	
+
         if key in self._used:
             return self._used[key]
 
@@ -112,7 +88,7 @@ class AbstractConnectionPool(object):
             if len(self._used) == self.maxconn:
                 raise PoolError("connection pool exausted")
             return self._connect(key)
-		 
+
     def _putconn(self, conn, key=None, close=False):
         """Put away a connection."""
         if self.closed: raise PoolError("connection pool is closed")
@@ -160,7 +136,7 @@ class AbstractConnectionPool(object):
             except:
                 pass
         self.closed = True
-        
+
 
 class SimpleConnectionPool(AbstractConnectionPool):
     """A connection pool that can't be shared across different threads."""
@@ -206,7 +182,7 @@ class ThreadedConnectionPool(AbstractConnectionPool):
 
 
 class PersistentConnectionPool(AbstractConnectionPool):
-    """A pool that assigns persistent connections to different threads. 
+    """A pool that assigns persistent connections to different threads.
 
     Note that this connection pool generates by itself the required keys
     using the current thread id.  This means that until a thread puts away
