@@ -568,7 +568,7 @@ _psyco_bincurs_execute(cursorObject *self,
     if (pargs.nParams && mres >= 0)
         res = pq_execute_params(self, &pargs, async, 0);
     else
-        res = pq_execute(self, PyString_AS_STRING(self->query), async, 0);
+        res = pq_execute(self, PyString_AS_STRING(self->query), async, 0, 0);
     Dprintf("psyco_bincurs_execute: res = %d, pgres = %p", res, self->pgres);
     if (res == -1) { goto fail; }
 

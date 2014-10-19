@@ -25,6 +25,7 @@
 # Use unittest2 if available. Otherwise mock a skip facility with warnings.
 
 import os
+import platform
 import sys
 from functools import wraps
 from testconfig import dsn
@@ -293,6 +294,26 @@ def skip_if_green(reason):
 
 skip_copy_if_green = skip_if_green("copy in async mode currently not supported")
 
+def skip_if_no_getrefcount(f):
+    @wraps(f)
+    def skip_if_no_getrefcount_(self):
+        if not hasattr(sys, 'getrefcount'):
+            return self.skipTest('skipped, no sys.getrefcount()')
+        else:
+            return f(self)
+    return skip_if_no_getrefcount_
+
+def skip_if_windows(f):
+    """Skip a test if run on windows"""
+    @wraps(f)
+    def skip_if_windows_(self):
+        if platform.system() == 'Windows':
+            return self.skipTest("Not supported on Windows")
+        else:
+            return f(self)
+    return skip_if_windows_
+
+
 def script_to_py3(script):
     """Convert a script to Python3 syntax if required."""
     if sys.version_info[0] < 3:
@@ -320,3 +341,13 @@ def script_to_py3(script):
         f2.close()
         os.remove(filename)
 
+class py3_raises_typeerror(object):
+
+    def __enter__(self):
+        pass
+
+    def __exit__(self, type, exc, tb):
+        if sys.version_info[0] >= 3:
+            assert type is TypeError
+            return True
+        

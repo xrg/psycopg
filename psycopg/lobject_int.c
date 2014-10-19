@@ -32,8 +32,6 @@
 
 #include <string.h>
 
-#ifdef PSYCOPG_EXTENSIONS
-
 static void
 collect_error(connectionObject *conn, char **error)
 {
@@ -253,7 +251,7 @@ lobject_close_locked(lobjectObject *self, char **error)
         return 0;
         break;
     default:
-        PyErr_SetString(OperationalError, "the connection is broken");
+        *error = strdup("the connection is broken");
         return -1;
         break;
     }
@@ -490,6 +488,3 @@ lobject_truncate(lobjectObject *self, size_t len)
 }
 
 #endif /* PG_VERSION_HEX >= 0x080300 */
-
-#endif
-

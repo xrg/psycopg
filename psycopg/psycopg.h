@@ -59,13 +59,11 @@ extern "C" {
 HIDDEN psyco_errors_fill_RETURN psyco_errors_fill psyco_errors_fill_PROTO;
 HIDDEN psyco_errors_set_RETURN psyco_errors_set psyco_errors_set_PROTO;
 
-/* global excpetions */
+/* global exceptions */
 extern HIDDEN PyObject *Error, *Warning, *InterfaceError, *DatabaseError,
     *InternalError, *OperationalError, *ProgrammingError,
     *IntegrityError, *DataError, *NotSupportedError;
-#ifdef PSYCOPG_EXTENSIONS
 extern HIDDEN PyObject *QueryCanceledError, *TransactionRollbackError;
-#endif
 
 /* python versions and compatibility stuff */
 #ifndef PyMODINIT_FUNC
@@ -164,13 +162,11 @@ STEALS(1) HIDDEN PyObject * psycopg_ensure_text(PyObject *obj);
 #define NotSupportedError_doc \
 "A method or database API was used which is not supported by the database."
 
-#ifdef PSYCOPG_EXTENSIONS
 #define QueryCanceledError_doc \
 "Error related to SQL query cancellation."
 
 #define TransactionRollbackError_doc \
-"Error causing transaction rollback (deadlocks, serialisation failures, etc)."
-#endif
+"Error causing transaction rollback (deadlocks, serialization failures, etc)."
 
 #ifdef __cplusplus
 }

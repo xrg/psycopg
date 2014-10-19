@@ -1,3 +1,91 @@
+Current release
+---------------
+
+What's new in psycopg 2.6
+-------------------------
+
+Bug fixes:
+
+- Json apapter's `!str()` returns the adapted content instead of the `!repr()`
+  (:ticket:`#191`).
+
+
+What's new in psycopg 2.5.5
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Named cursors used as context manager don't swallow the exception on exit
+  (:ticket:`#262`).
+
+
+What's new in psycopg 2.5.4
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Added :sql:`jsonb` support for PostgreSQL 9.4 (:ticket:`#226`).
+- Fixed segfault if COPY statements are passed to `~cursor.execute()` instead
+  of using the proper methods (:ticket:`#219`).
+- Force conversion of pool arguments to integer to avoid potentially unbounded
+  pools (:ticket:`#220`).
+- Cursors :sql:`WITH HOLD` don't begin a new transaction upon move/fetch/close
+  (:ticket:`#228`).
+- Cursors :sql:`WITH HOLD` can be used in autocommit (:ticket:`#229`).
+- `~cursor.callproc()` doesn't silently ignore an argument without a length.
+- Fixed memory leak with large objects (:ticket:`#256`).
+- Make sure the internal ``_psycopg.so`` module can be imported stand-alone (to
+  allow modules juggling such as the one described in :ticket:`#201`).
+
+
+What's new in psycopg 2.5.3
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Work around `pip issue #1630 <https://github.com/pypa/pip/issues/1630>`__
+  making installation via ``pip -e git+url`` impossible (:ticket:`#18`).
+- Copy operations correctly set the `cursor.rowcount` attribute
+  (:ticket:`#180`).
+- It is now possible to call `get_transaction_status()` on closed connections.
+- Fixed unsafe access to object names causing assertion failures in
+  Python 3 debug builds (:ticket:`#188`).
+- Mark the connection closed if found broken on `poll()` (from :ticket:`#192`
+  discussion)
+- Fixed handling of dsn and closed attributes in connection subclasses
+  failing to connect (from :ticket:`#192` discussion).
+- Added arbitrary but stable order to `Range` objects, thanks to
+  Chris Withers (:ticket:`#193`).
+- Avoid blocking async connections on connect (:ticket:`#194`). Thanks to
+  Adam Petrovich for the bug report and diagnosis.
+- Don't segfault using poorly defined cursor subclasses which forgot to call
+  the superclass init (:ticket:`#195`).
+- Mark the connection closed when a Socket connection is broken, as it
+  happens for TCP connections instead (:ticket:`#196`).
+- Fixed overflow opening a lobject with an oid not fitting in a signed int
+  (:ticket:`#203`).
+- Fixed handling of explicit default ``cursor_factory=None`` in
+  `connection.cursor()` (:ticket:`#210`).
+- Fixed possible segfault in named cursors creation.
+- Fixed debug build on Windows, thanks to James Emerton.
+
+
+What's new in psycopg 2.5.2
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Fixed segfault pickling the exception raised on connection error
+  (:ticket:`#170`).
+- Meaningful connection errors report a meaningful message, thanks to
+  Alexey Borzenkov (:ticket:`#173`).
+- Manually creating `lobject` with the wrong parameter doesn't segfault
+  (:ticket:`#187`).
+
+
+What's new in psycopg 2.5.1
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Fixed build on Solaris 10 and 11 where the round() function is already
+  declared (:ticket:`#146`).
+- Fixed comparison of `Range` with non-range objects (:ticket:`#164`).
+  Thanks to Chris Withers for the patch.
+- Fixed double-free on connection dealloc (:ticket:`#166`). Thanks to
+  Gangadharan S.A. for the report and fix suggestion.
+
+
 What's new in psycopg 2.5
 -------------------------
 
@@ -51,7 +139,7 @@ What's new in psycopg 2.4.6
 - 'register_hstore()', 'register_composite()', 'tpc_recover()' work with
   RealDictConnection and Cursor (:ticket:`#114`).
 - Fixed broken pool for Zope and connections re-init across ZSQL methods
-  in the same request (tickets #123, #125, #142).
+  in the same request (:tickets:`#123, #125, #142`).
 - connect() raises an exception instead of swallowing keyword arguments
   when a connection string is specified as well (:ticket:`#131`).
 - Discard any result produced by 'executemany()' (:ticket:`#133`).
@@ -73,7 +161,7 @@ What's new in psycopg 2.4.5
 - Error and its subclasses are picklable, useful for multiprocessing
   interaction (:ticket:`#90`).
 - Better efficiency and formatting of timezone offset objects thanks
-  to Menno Smits (tickets #94, #95).
+  to Menno Smits (:tickets:`#94, #95`).
 - Fixed 'rownumber' during iteration on cursor subclasses.
   Regression introduced in 2.4.4 (:ticket:`#100`).
 - Added support for 'inet' arrays.
@@ -181,7 +269,7 @@ New features and changes:
     ISO885916, LATIN10, SHIFT_JIS_2004.
   - Dropped repeated dictionary lookups with unicode query/parameters.
 
-- Improvements to the named cusors:
+- Improvements to the named cursors:
 
   - More efficient iteration on named cursors, fetching 'itersize'
     records at time from the backend.
@@ -244,7 +332,7 @@ Main new features:
 - `dict` to `hstore` adapter and `hstore` to `dict` typecaster, using both
   9.0 and pre-9.0 syntax.
 - Two-phase commit protocol support as per DBAPI specification.
-- Support for payload in notifications received from the backed.
+- Support for payload in notifications received from the backend.
 - `namedtuple`-returning cursor.
 - Query execution cancel.
 
@@ -284,7 +372,7 @@ Bux fixes:
   The old register_tstz_w_secs() function is deprecated and will raise a
   warning if called.
 - Exceptions raised by the column iterator are propagated.
-- Exceptions raised by executemany() interators are propagated.
+- Exceptions raised by executemany() iterators are propagated.
 
 
 What's new in psycopg 2.2.1
@@ -401,7 +489,7 @@ New features:
 
 Bug fixes:
 
-- Fixed exeception in setup.py.
+- Fixed exception in setup.py.
 - More robust detection of PostgreSQL development versions.
 - Fixed exception in RealDictCursor, introduced in 2.0.10.
 
@@ -783,7 +871,7 @@ What's new in psycopg 1.99.11
 
 * changed 'tuple_factory' cursor attribute name to 'row_factory'.
 
-* the .cursor attribute is gone and connections and cursors are propely
+* the .cursor attribute is gone and connections and cursors are properly
   gc-managed.
 
 * fixes to the async core.
@@ -832,7 +920,7 @@ What's new in psycopg 1.99.8
 * now cursors support .fileno() and .isready() methods, to be used in
   select() calls.
 * .copy_from() and .copy_in() methods are back in (still using the old
-  protocol, will be updated to use new one in next releasae.)
+  protocol, will be updated to use new one in next release.)
 * fixed memory corruption bug reported on win32 platform.
 
 What's new in psycopg 1.99.7

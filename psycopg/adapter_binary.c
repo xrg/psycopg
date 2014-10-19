@@ -269,11 +269,6 @@ binary_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return type->tp_alloc(type, 0);
 }
 
-static PyObject *
-binary_repr(binaryObject *self)
-{
-    return PyString_FromFormat("<psycopg2._psycopg.Binary object at %p>", self);
-}
 
 /* object type */
 
@@ -282,14 +277,14 @@ binary_repr(binaryObject *self)
 
 PyTypeObject binaryType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "psycopg2._psycopg.Binary",
+    "psycopg2.extensions.Binary",
     sizeof(binaryObject), 0,
     binary_dealloc, /*tp_dealloc*/
     0,          /*tp_print*/
     0,          /*tp_getattr*/
     0,          /*tp_setattr*/
     0,          /*tp_compare*/
-    (reprfunc)binary_repr, /*tp_repr*/
+    0,          /*tp_repr*/
     0,          /*tp_as_number*/
     0,          /*tp_as_sequence*/
     0,          /*tp_as_mapping*/
@@ -319,17 +314,3 @@ PyTypeObject binaryType = {
     0,          /*tp_alloc*/
     binary_new, /*tp_new*/
 };
-
-
-/** module-level functions **/
-
-PyObject *
-psyco_Binary(PyObject *module, PyObject *args)
-{
-    PyObject *str;
-
-    if (!PyArg_ParseTuple(args, "O", &str))
-        return NULL;
-
-    return PyObject_CallFunctionObjArgs((PyObject *)&binaryType, str, NULL);
-}

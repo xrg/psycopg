@@ -1,7 +1,7 @@
 """Miscellaneous goodies for psycopg2
 
 This module is a generic place used to hold little helper functions
-and classes untill a better place in the distribution is found.
+and classes until a better place in the distribution is found.
 """
 # psycopg/extras.py - miscellaneous extra goodies for psycopg
 #
@@ -131,7 +131,7 @@ class DictCursor(DictCursorBase):
             self._query_executed = 0
 
 class DictRow(list):
-    """A row object that allow by-colmun-name access to data."""
+    """A row object that allow by-column-name access to data."""
 
     __slots__ = ('_index',)
 
@@ -272,6 +272,7 @@ class NamedTupleCursor(_cursor):
     their elements can be accessed both as regular numeric items as well as
     attributes.
 
+        >>> conn = psycopg2.connection()
         >>> nt_cur = conn.cursor(cursor_factory=psycopg2.extras.NamedTupleCursor)
         >>> rec = nt_cur.fetchone()
         >>> rec
@@ -406,7 +407,7 @@ class MinTimeLoggingConnection(LoggingConnection):
 
     This is just an example of how to sub-class `LoggingConnection` to
     provide some extra filtering for the logged queries. Both the
-    `inizialize()` and `filter()` methods are overwritten to make sure
+    `initialize()` and `filter()` methods are overwritten to make sure
     that only queries executing for more than ``mintime`` ms are logged.
 
     Note that this connection uses the specialized cursor
@@ -449,19 +450,22 @@ class UUID_adapter(object):
     def __init__(self, uuid):
         self._uuid = uuid
 
-    def prepare(self, conn):
-        pass
+    def __conform__(self, proto):
+        if proto is _ext.ISQLQuote:
+            return self
 
     def getquoted(self):
-        return "'"+str(self._uuid)+"'::uuid"
+        return b("'%s'::uuid" % self._uuid)
 
-        def getraw(self):
-            return str(self._uuid)
-            
-        def getraw_oid(self):
-            return 2950
-            
-    __str__ = getquoted
+    def __str__(self):
+        return "'%s'::uuid" % self._uuid
+
+    def getraw(self):
+        return str(self._uuid)
+
+    def getraw_oid(self):
+        return 2950
+
 
 def register_uuid(oids=None, conn_or_curs=None):
     """Create the UUID type and an uuid.UUID adapter.
@@ -520,8 +524,8 @@ class Inet(object):
             obj.prepare(self._conn)
         return obj.getquoted() + b("::inet")
 
-    def __conform__(self, foo):
-        if foo is _ext.ISQLQuote:
+    def __conform__(self, proto):
+        if proto is _ext.ISQLQuote:
             return self
 
     def __str__(self):
@@ -969,7 +973,8 @@ def register_composite(name, conn_or_curs, globally=False, factory=None):
 
 
 # expose the json adaptation stuff into the module
-from psycopg2._json import json, Json, register_json, register_default_json
+from psycopg2._json import json, Json, register_json
+from psycopg2._json import register_default_json, register_default_jsonb
 
 
 # Expose range-related objects

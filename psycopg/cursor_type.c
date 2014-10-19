@@ -39,9 +39,6 @@
 #include <stdlib.h>
 
 
-extern PyObject *pyPsycopgTzFixedOffsetTimezone;
-
-
 /** DBAPI methods **/
 
 /* close method - close the cursor */
@@ -60,10 +57,24 @@ psyco_curs_close(cursorObject *self)
 
     if (self->name != NULL) {
         char buffer[128];
+        PGTransactionStatusType status;
 
-        EXC_IF_NO_MARK(self);
-        PyOS_snprintf(buffer, 127, "CLOSE \"%s\"", self->name);
-        if (pq_execute(self, buffer, 0, 0) == -1) return NULL;
+        if (self->conn) {
+            status = PQtransactionStatus(self->conn->pgconn);
+        }
+        else {
+            status = PQTRANS_UNKNOWN;
+        }
+
+        if (!(status == PQTRANS_UNKNOWN || status == PQTRANS_INERROR)) {
+            EXC_IF_NO_MARK(self);
+            PyOS_snprintf(buffer, 127, "CLOSE \"%s\"", self->name);
+            if (pq_execute(self, buffer, 0, 0, 1) == -1) return NULL;
+        }
+        else {
+            Dprintf("skipping named curs close because tx status %d",
+                (int)status);
+        }
     }
 
     self->closed = 1;
@@ -109,7 +120,7 @@ _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject **new)
         /* if we find '%(' then this is a dictionary, we:
            1/ find the matching ')' and extract the key name
            2/ locate the value in the dictionary (or return an error)
-           3/ mogrify the value into something usefull (quoting)...
+           3/ mogrify the value into something useful (quoting)...
            4/ ...and add it to the new dictionary to be used as argument
         */
         case '(':
@@ -314,7 +325,7 @@ _psyco_curs_merge_query_args(cursorObject *self,
            "not all arguments converted"
 
        and return the appropriate ProgrammingError. we do that by grabbing
-       the curren exception (we will later restore it if the type or the
+       the current exception (we will later restore it if the type or the
        strings do not match.) */
 
     if (!(fquery = Bytes_Format(query, args))) {
@@ -444,7 +455,7 @@ _psyco_curs_execute(cursorObject *self,
 
     /* At this point, the SQL statement must be str, not unicode */
 
-    tmp = pq_execute(self, Bytes_AS_STRING(self->query), async, no_result);
+    tmp = pq_execute(self, Bytes_AS_STRING(self->query), async, no_result, 0);
     Dprintf("psyco_curs_execute: res = %d, pgres = %p", tmp, self->pgres);
     if (tmp < 0) { goto exit; }
 
@@ -478,7 +489,7 @@ psyco_curs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
                 "can't call .execute() on named cursors more than once");
             return NULL;
         }
-        if (self->conn->autocommit) {
+        if (self->conn->autocommit && !self->withhold) {
             psyco_set_error(ProgrammingError, self,
                 "can't use a named cursor outside of transactions");
             return NULL;
@@ -506,7 +517,7 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
 {
     PyObject *operation = NULL, *vars = NULL;
     PyObject *v, *iter = NULL;
-    int rowcount = 0;
+    long rowcount = 0;
 
     static char *kwlist[] = {"query", "vars_list", NULL};
 
@@ -559,7 +570,6 @@ psyco_curs_executemany(cursorObject *self, PyObject *args, PyObject *kwargs)
 }
 
 
-#ifdef PSYCOPG_EXTENSIONS
 #define psyco_curs_mogrify_doc \
 "mogrify(query, vars=None) -> str -- Return query after vars binding."
 
@@ -622,7 +632,6 @@ psyco_curs_mogrify(cursorObject *self, PyObject *args, PyObject *kwargs)
 
     return _psyco_curs_mogrify(self, operation, vars);
 }
-#endif
 
 
 /* cast method - convert an oid/string into a Python object */
@@ -814,7 +823,7 @@ psyco_curs_fetchone(cursorObject *self)
         EXC_IF_ASYNC_IN_PROGRESS(self, fetchone);
         EXC_IF_TPC_PREPARED(self->conn, fetchone);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD 1 FROM \"%s\"", self->name);
-        if (pq_execute(self, buffer, 0, 0) == -1) return NULL;
+        if (pq_execute(self, buffer, 0, 0, self->withhold) == -1) return NULL;
         if (_psyco_curs_prefetch(self) < 0) return NULL;
     }
 
@@ -866,7 +875,7 @@ psyco_curs_next_named(cursorObject *self)
 
         PyOS_snprintf(buffer, 127, "FETCH FORWARD %ld FROM \"%s\"",
             self->itersize, self->name);
-        if (pq_execute(self, buffer, 0, 0) == -1) return NULL;
+        if (pq_execute(self, buffer, 0, 0, self->withhold) == -1) return NULL;
         if (_psyco_curs_prefetch(self) < 0) return NULL;
     }
 
@@ -937,7 +946,7 @@ psyco_curs_fetchmany(cursorObject *self, PyObject *args, PyObject *kwords)
         EXC_IF_TPC_PREPARED(self->conn, fetchone);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD %d FROM \"%s\"",
             (int)size, self->name);
-        if (pq_execute(self, buffer, 0, 0) == -1) { goto exit; }
+        if (pq_execute(self, buffer, 0, 0, self->withhold) == -1) { goto exit; }
         if (_psyco_curs_prefetch(self) < 0) { goto exit; }
     }
 
@@ -1014,7 +1023,7 @@ psyco_curs_fetchall(cursorObject *self)
         EXC_IF_ASYNC_IN_PROGRESS(self, fetchall);
         EXC_IF_TPC_PREPARED(self->conn, fetchall);
         PyOS_snprintf(buffer, 127, "FETCH FORWARD ALL FROM \"%s\"", self->name);
-        if (pq_execute(self, buffer, 0, 0) == -1) { goto exit; }
+        if (pq_execute(self, buffer, 0, 0, self->withhold) == -1) { goto exit; }
         if (_psyco_curs_prefetch(self) < 0) { goto exit; }
     }
 
@@ -1087,8 +1096,7 @@ psyco_curs_callproc(cursorObject *self, PyObject *args)
     }
 
     if (parameters != Py_None) {
-        nparameters = PyObject_Length(parameters);
-        if (nparameters < 0) nparameters = 0;
+        if (-1 == (nparameters = PyObject_Length(parameters))) { goto exit; }
     }
 
     /* allocate some memory, build the SQL and create a PyString from it */
@@ -1224,7 +1232,7 @@ psyco_curs_scroll(cursorObject *self, PyObject *args, PyObject *kwargs)
         char buffer[128];
 
         EXC_IF_NO_MARK(self);
-        EXC_IF_ASYNC_IN_PROGRESS(self, scroll)
+        EXC_IF_ASYNC_IN_PROGRESS(self, scroll);
         EXC_IF_TPC_PREPARED(self->conn, scroll);
 
         if (strcmp(mode, "absolute") == 0) {
@@ -1234,7 +1242,7 @@ psyco_curs_scroll(cursorObject *self, PyObject *args, PyObject *kwargs)
         else {
             PyOS_snprintf(buffer, 127, "MOVE %d FROM \"%s\"", value, self->name);
         }
-        if (pq_execute(self, buffer, 0, 0) == -1) return NULL;
+        if (pq_execute(self, buffer, 0, 0, self->withhold) == -1) return NULL;
         if (_psyco_curs_prefetch(self) < 0) return NULL;
     }
 
@@ -1277,8 +1285,6 @@ exit:
     return rv;
 }
 
-
-#ifdef PSYCOPG_EXTENSIONS
 
 /* Return a newly allocated buffer containing the list of columns to be
  * copied. On error return NULL and set an exception.
@@ -1447,7 +1453,7 @@ psyco_curs_copy_from(cursorObject *self, PyObject *args, PyObject *kwargs)
     Py_INCREF(file);
     self->copyfile = file;
 
-    if (pq_execute(self, query, 0, 0) >= 0) {
+    if (pq_execute(self, query, 0, 0, 0) >= 0) {
         res = Py_None;
         Py_INCREF(Py_None);
     }
@@ -1541,7 +1547,7 @@ psyco_curs_copy_to(cursorObject *self, PyObject *args, PyObject *kwargs)
     Py_INCREF(file);
     self->copyfile = file;
 
-    if (pq_execute(self, query, 0, 0) >= 0) {
+    if (pq_execute(self, query, 0, 0, 0) >= 0) {
         res = Py_None;
         Py_INCREF(Py_None);
     }
@@ -1615,7 +1621,7 @@ psyco_curs_copy_expert(cursorObject *self, PyObject *args, PyObject *kwargs)
     self->copyfile = file;
 
     /* At this point, the SQL statement must be str, not unicode */
-    if (pq_execute(self, Bytes_AS_STRING(sql), 0, 0) >= 0) {
+    if (pq_execute(self, Bytes_AS_STRING(sql), 0, 0, 0) >= 0) {
         res = Py_None;
         Py_INCREF(res);
     }
@@ -1725,8 +1731,6 @@ psyco_curs_scrollable_set(cursorObject *self, PyObject *pyvalue)
     return 0;
 }
 
-#endif
-
 
 /** the cursor object **/
 
@@ -1794,7 +1798,6 @@ static struct PyMethodDef cursorObject_methods[] = {
     {"__exit__", (PyCFunction)psyco_curs_exit,
      METH_VARARGS, psyco_curs_exit_doc},
     /* psycopg extensions */
-#ifdef PSYCOPG_EXTENSIONS
     {"cast", (PyCFunction)psyco_curs_cast,
      METH_VARARGS, psyco_curs_cast_doc},
     {"mogrify", (PyCFunction)psyco_curs_mogrify,
@@ -1805,7 +1808,6 @@ static struct PyMethodDef cursorObject_methods[] = {
      METH_VARARGS|METH_KEYWORDS, psyco_curs_copy_to_doc},
     {"copy_expert", (PyCFunction)psyco_curs_copy_expert,
      METH_VARARGS|METH_KEYWORDS, psyco_curs_copy_expert_doc},
-#endif
     {NULL}
 };
 
@@ -1831,7 +1833,6 @@ static struct PyMemberDef cursorObject_members[] = {
         "The current row position."},
     {"connection", T_OBJECT, OFFSETOF(conn), READONLY,
         "The connection where the cursor comes from."},
-#ifdef PSYCOPG_EXTENSIONS
     {"name", T_STRING, OFFSETOF(name), READONLY},
     {"statusmessage", T_OBJECT, OFFSETOF(pgstatus), READONLY,
         "The return message of the last command."},
@@ -1842,13 +1843,11 @@ static struct PyMemberDef cursorObject_members[] = {
     {"typecaster", T_OBJECT, OFFSETOF(caster), READONLY},
     {"string_types", T_OBJECT, OFFSETOF(string_types), 0},
     {"binary_types", T_OBJECT, OFFSETOF(binary_types), 0},
-#endif
     {NULL}
 };
 
 /* object calculated member list */
 static struct PyGetSetDef cursorObject_getsets[] = {
-#ifdef PSYCOPG_EXTENSIONS
     { "closed", (getter)psyco_curs_get_closed, NULL,
       psyco_curs_closed_doc, NULL },
     { "withhold",
@@ -1859,7 +1858,6 @@ static struct PyGetSetDef cursorObject_getsets[] = {
       (getter)psyco_curs_scrollable_get,
       (setter)psyco_curs_scrollable_set,
       psyco_curs_scrollable_doc, NULL },
-#endif
     {NULL}
 };
 
@@ -1877,11 +1875,11 @@ cursor_setup(cursorObject *self, connectionObject *conn, const char *name)
         }
     }
 
-    /* FIXME: why does this raise an excpetion on the _next_ line of code?
+    /* FIXME: why does this raise an exception on the _next_ line of code?
     if (PyObject_IsInstance((PyObject*)conn,
                              (PyObject *)&connectionType) == 0) {
         PyErr_SetString(PyExc_TypeError,
-            "argument 1 must be subclass of psycopg2._psycopg.connection");
+            "argument 1 must be subclass of psycopg2.extensions.connection");
         return -1;
     } */
     Py_INCREF(conn);
@@ -1898,8 +1896,17 @@ cursor_setup(cursorObject *self, connectionObject *conn, const char *name)
     self->tuple_factory = Py_None;
 
     /* default tzinfo factory */
-    Py_INCREF(pyPsycopgTzFixedOffsetTimezone);
-    self->tzinfo_factory = pyPsycopgTzFixedOffsetTimezone;
+    {
+        PyObject *m = NULL;
+        if ((m = PyImport_ImportModule("psycopg2.tz"))) {
+            self->tzinfo_factory = PyObject_GetAttrString(
+                    m, "FixedOffsetTimezone");
+            Py_DECREF(m);
+        }
+        if (!self->tzinfo_factory) {
+            return -1;
+        }
+    }
 
     Dprintf("cursor_setup: good cursor object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
@@ -1954,31 +1961,34 @@ cursor_init(PyObject *obj, PyObject *args, PyObject *kwargs)
 {
     PyObject *conn;
     PyObject *name = Py_None;
-    const char *cname;
+    PyObject *bname = NULL;
+    const char *cname = NULL;
+    int rv = -1;
 
     static char *kwlist[] = {"conn", "name", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O!|O", kwlist,
             &connectionType, &conn, &name)) {
-        return -1;
+        goto exit;
     }
 
-    if (name == Py_None) {
-        cname = NULL;
-    } else {
+    if (name != Py_None) {
         Py_INCREF(name);   /* for ensure_bytes */
-        if (!(name = psycopg_ensure_bytes(name))) {
+        if (!(bname = psycopg_ensure_bytes(name))) {
             /* name has had a ref stolen */
-            return -1;
+            goto exit;
         }
-        Py_DECREF(name);
 
-        if (!(cname = Bytes_AsString(name))) {
-            return -1;
+        if (!(cname = Bytes_AsString(bname))) {
+            goto exit;
         }
     }
 
-    return cursor_setup((cursorObject *)obj, (connectionObject *)conn, cname);
+    rv = cursor_setup((cursorObject *)obj, (connectionObject *)conn, cname);
+
+exit:
+    Py_XDECREF(bname);
+    return rv;
 }
 
 static PyObject *
@@ -2019,7 +2029,7 @@ cursor_traverse(cursorObject *self, visitproc visit, void *arg)
 
 PyTypeObject cursorType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "psycopg2._psycopg.cursor",
+    "psycopg2.extensions.cursor",
     sizeof(cursorObject), 0,
     cursor_dealloc, /*tp_dealloc*/
     0,          /*tp_print*/

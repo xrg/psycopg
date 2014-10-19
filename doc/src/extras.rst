@@ -41,7 +41,7 @@ If you want to use a `!connection` subclass you can pass it as the
 Dictionary-like cursor
 ^^^^^^^^^^^^^^^^^^^^^^
 
-The dict cursors allow to access to the retrieved records using an iterface
+The dict cursors allow to access to the retrieved records using an interface
 similar to the Python dictionaries instead of the tuples.
 
     >>> dict_cur = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
@@ -160,23 +160,27 @@ JSON_ adaptation
 ^^^^^^^^^^^^^^^^
 
 .. versionadded:: 2.5
+.. versionchanged:: 2.5.4
+    added |jsonb| support. In previous versions |jsonb| values are returned
+    as strings. See :ref:`the FAQ <faq-jsonb-adapt>` for a workaround.
 
-Psycopg can adapt Python objects to and from the PostgreSQL |pgjson|_ type.
-With PostgreSQL 9.2 adaptation is available out-of-the-box. To use JSON data
-with previous database versions (either with the `9.1 json extension`__, but
-even if you want to convert text fields to JSON) you can use
-`register_json()`.
+Psycopg can adapt Python objects to and from the PostgreSQL |pgjson|_ and
+|jsonb| types.  With PostgreSQL 9.2 and following versions adaptation is
+available out-of-the-box. To use JSON data with previous database versions
+(either with the `9.1 json extension`__, but even if you want to convert text
+fields to JSON) you can use the `register_json()` function.
 
 .. __: http://people.planetpostgresql.org/andrew/index.php?/archives/255-JSON-for-PG-9.2-...-and-now-for-9.1!.html
 
-The Python library used to convert Python objects to JSON depends on the
-language version: with Python 2.6 and following the :py:mod:`json` module from
-the standard library is used; with previous versions the `simplejson`_ module
-is used if available. Note that the last `!simplejson` version supporting
-Python 2.4 is the 2.0.9.
+The Python library used by default to convert Python objects to JSON and to
+parse data from the database depends on the language version: with Python 2.6
+and following the :py:mod:`json` module from the standard library is used;
+with previous versions the `simplejson`_ module is used if available. Note
+that the last `!simplejson` version supporting Python 2.4 is the 2.0.9.
 
 .. _JSON: http://www.json.org/
 .. |pgjson| replace:: :sql:`json`
+.. |jsonb| replace:: :sql:`jsonb`
 .. _pgjson: http://www.postgresql.org/docs/current/static/datatype-json.html
 .. _simplejson: http://pypi.python.org/pypi/simplejson/
 
@@ -186,8 +190,22 @@ the `Json` adapter::
     curs.execute("insert into mytable (jsondata) values (%s)",
         [Json({'a': 100})])
 
-Reading from the database, |pgjson| values will be automatically converted to
-Python objects.
+Reading from the database, |pgjson| and |jsonb| values will be automatically
+converted to Python objects.
+
+.. note::
+
+    If you are using the PostgreSQL :sql:`json` data type but you want to read
+    it as string in Python instead of having it parsed, your can either cast
+    the column to :sql:`text` in the query (it is an efficient operation, that
+    doesn't involve a copy)::
+
+        cur.execute("select jsondata::text from mytable")
+
+    or you can register a no-op `!loads()` function with
+    `register_default_json()`::
+
+        psycopg2.extras.register_default_json(loads=lambda x: x)
 
 .. note::
 
@@ -204,7 +222,7 @@ Python objects.
     effects.
 
 If you want to customize the adaptation from Python to PostgreSQL you can
-either provide a custom `!dumps()` function to `!Json`::
+either provide a custom `!dumps()` function to `Json`::
 
     curs.execute("insert into mytable (jsondata) values (%s)",
         [Json({'a': 100}, dumps=simplejson.dumps)])
@@ -219,9 +237,11 @@ or you can subclass it overriding the `~Json.dumps()` method::
         [MyJson({'a': 100})])
 
 Customizing the conversion from PostgreSQL to Python can be done passing a
-custom `!loads()` function to `register_json()` (or `register_default_json()`
-for PostgreSQL 9.2).  For example, if you want to convert the float values
-from :sql:`json` into :py:class:`~decimal.Decimal` you can use::
+custom `!loads()` function to `register_json()`.  For the builtin data types
+(|pgjson| from PostgreSQL 9.2, |jsonb| from PostgreSQL 9.4) use
+`register_default_json()` and `register_default_jsonb()`.  For example, if you
+want to convert the float values from :sql:`json` into
+:py:class:`~decimal.Decimal` you can use::
 
     loads = lambda x: json.loads(x, parse_float=Decimal)
     psycopg2.extras.register_json(conn, loads=loads)
@@ -234,7 +254,14 @@ from :sql:`json` into :py:class:`~decimal.Decimal` you can use::
 
 .. autofunction:: register_json
 
+    .. versionchanged:: 2.5.4
+        added the *name* parameter to enable :sql:`jsonb` support.
+
 .. autofunction:: register_default_json
+
+.. autofunction:: register_default_jsonb
+
+    .. versionadded:: 2.5.4
 
 
 
@@ -423,8 +450,16 @@ user-defined |range| types can be adapted using `register_range()`.
 
     `!Range` objects are immutable, hashable, and support the ``in`` operator
     (checking if an element is within the range). They can be tested for
-    equivalence but not for ordering. Empty ranges evaluate to `!False` in
-    boolean context, nonempty evaluate to `!True`.
+    equivalence. Empty ranges evaluate to `!False` in boolean context,
+    nonempty evaluate to `!True`.
+
+    .. versionchanged:: 2.5.3
+
+        `!Range` objects can be sorted although, as on the server-side, this
+        ordering is not particularly meangingful. It is only meant to be used
+        by programs assuming objects using `!Range` as primary key can be
+        sorted on them. In previous versions comparing `!Range`\s raises
+        `!TypeError`.
 
     Although it is possible to instantiate `!Range` objects, the class doesn't
     have an adapter registered, so you cannot normally pass these instances as
@@ -452,6 +487,17 @@ automatically casted into instances of these classes.
 .. autoclass:: DateRange
 .. autoclass:: DateTimeRange
 .. autoclass:: DateTimeTZRange
+
+.. note::
+
+    Python lacks a representation for :sql:`infinity` date so Psycopg converts
+    the value to `date.max` and such. When written into the database these
+    dates will assume their literal value (e.g. :sql:`9999-12-31` instead of
+    :sql:`infinity`).  Check :ref:`infinite-dates-handling` for an example of
+    an alternative adapter to map `date.max` to :sql:`infinity`. An
+    alternative dates adapter will be used automatically by the `DateRange`
+    adapter and so on.
+
 
 Custom |range| types (created with |CREATE TYPE|_ :sql:`... AS RANGE`) can be
 adapted to a custom `Range` subclass:

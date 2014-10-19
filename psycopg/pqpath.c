@@ -25,7 +25,7 @@
 
 /* IMPORTANT NOTE: no function in this file do its own connection locking
    except for pg_execute and pq_fetch (that are somehow high-level). This means
-   that all the othe functions should be called while holding a lock to the
+   that all the other functions should be called while holding a lock to the
    connection.
 */
 
@@ -113,11 +113,7 @@ exception_from_sqlstate(const char *sqlstate)
     case '4':
         switch (sqlstate[1]) {
         case '0': /* Class 40 - Transaction Rollback */
-#ifdef PSYCOPG_EXTENSIONS
             return TransactionRollbackError;
-#else
-            return OperationalError;
-#endif
         case '2': /* Class 42 - Syntax Error or Access Rule Violation */
         case '4': /* Class 44 - WITH CHECK OPTION Violation */
             return ProgrammingError;
@@ -129,11 +125,9 @@ exception_from_sqlstate(const char *sqlstate)
            Class 55 - Object Not In Prerequisite State
            Class 57 - Operator Intervention
            Class 58 - System Error (errors external to PostgreSQL itself) */
-#ifdef PSYCOPG_EXTENSIONS
         if (!strcmp(sqlstate, "57014"))
             return QueryCanceledError;
         else
-#endif
             return OperationalError;
     case 'F': /* Class F0 - Configuration File Error */
         return InternalError;
@@ -153,7 +147,7 @@ exception_from_sqlstate(const char *sqlstate)
    This function should be called while holding the GIL.
 
    The function passes the ownership of the pgres to the returned exception,
-   wherer the pgres was the explicit argument or taken from the cursor.
+   where the pgres was the explicit argument or taken from the cursor.
    So, after calling it curs->pgres will be set to null */
 
 RAISES static void
@@ -417,10 +411,20 @@ pq_complete_error(connectionObject *conn, PGresult **pgres, char **error)
         pq_raise(conn, NULL, pgres);
         /* now *pgres is null */
     }
-    else if (*error != NULL) {
-        PyErr_SetString(OperationalError, *error);
-    } else {
-        PyErr_SetString(OperationalError, "unknown error");
+    else {
+        if (*error != NULL) {
+            PyErr_SetString(OperationalError, *error);
+        } else {
+            PyErr_SetString(OperationalError, "unknown error");
+        }
+        /* Trivia: with a broken socket connection PQexec returns NULL, so we
+         * end up here. With a TCP connection we get a pgres with an error
+         * instead, and the connection gets closed in the pq_raise call above
+         * (see ticket #196)
+         */
+        if (CONNECTION_BAD == PQstatus(conn->pgconn)) {
+            conn->closed = 2;
+        }
     }
 
     if (*error) {
@@ -781,7 +785,7 @@ exit:
    means that there is data available to be collected. -1 means an error, the
    exception will be set accordingly.
 
-   this fucntion locks the connection object
+   this function locks the connection object
    this function call Py_*_ALLOW_THREADS macros */
 
 int
@@ -797,6 +801,12 @@ pq_is_busy(connectionObject *conn)
         Dprintf("pq_is_busy: PQconsumeInput() failed");
         pthread_mutex_unlock(&(conn->lock));
         Py_BLOCK_THREADS;
+
+        /* if the libpq says pgconn is lost, close the py conn */
+        if (CONNECTION_BAD == PQstatus(conn->pgconn)) {
+            conn->closed = 2;
+        }
+
         PyErr_SetString(OperationalError, PQerrorMessage(conn->pgconn));
         return -1;
     }
@@ -826,6 +836,12 @@ pq_is_busy_locked(connectionObject *conn)
 
     if (PQconsumeInput(conn->pgconn) == 0) {
         Dprintf("pq_is_busy_locked: PQconsumeInput() failed");
+
+        /* if the libpq says pgconn is lost, close the py conn */
+        if (CONNECTION_BAD == PQstatus(conn->pgconn)) {
+            conn->closed = 2;
+        }
+
         PyErr_SetString(OperationalError, PQerrorMessage(conn->pgconn));
         return -1;
     }
@@ -871,7 +887,7 @@ pq_flush(connectionObject *conn)
 */
 
 RAISES_NEG int
-pq_execute(cursorObject *curs, const char *query, int async, int no_result)
+pq_execute(cursorObject *curs, const char *query, int async, int no_result, int no_begin)
 {
     PGresult *pgres = NULL;
     char *error = NULL;
@@ -894,7 +910,7 @@ pq_execute(cursorObject *curs, const char *query, int async, int no_result)
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&(curs->conn->lock));
 
-    if (pq_begin_locked(curs->conn, &pgres, &error, &_save) < 0) {
+    if (!no_begin && pq_begin_locked(curs->conn, &pgres, &error, &_save) < 0) {
         pthread_mutex_unlock(&(curs->conn->lock));
         Py_BLOCK_THREADS;
         pq_complete_error(curs->conn, &pgres, &error);
@@ -974,7 +990,7 @@ pq_execute(cursorObject *curs, const char *query, int async, int no_result)
     /* if the execute was sync, we call pq_fetch() immediately,
        to respect the old DBAPI-2.0 compatible behaviour */
     if (async == 0) {
-        Dprintf("pq_execute: entering syncronous DBAPI compatibility mode");
+        Dprintf("pq_execute: entering synchronous DBAPI compatibility mode");
         if (pq_fetch(curs, no_result) < 0) return -1;
     }
     else {
@@ -1092,7 +1108,6 @@ pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int asyn
             return -1;
         }
     }
-
     else if (async == 1) {
         int ret;
 
@@ -1151,7 +1166,7 @@ pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int asyn
 
 /* pq_fetch - fetch data after a query
 
-   this fucntion locks the connection object
+   this function locks the connection object
    this function call Py_*_ALLOW_THREADS macros
 
    return value:
@@ -1244,9 +1259,8 @@ _pq_fetch_tuples(cursorObject *curs)
             cast = psyco_default_cast;
         }
 
-        Dprintf("_pq_fetch_tuples: using cast at %p (%s) for type %d",
-                cast, Bytes_AS_STRING(((typecastObject*)cast)->name),
-                PQftype(curs->pgres,i));
+        Dprintf("_pq_fetch_tuples: using cast at %p for type %d",
+                cast, PQftype(curs->pgres,i));
         Py_INCREF(cast);
         PyTuple_SET_ITEM(casts, i, cast);
 
@@ -1353,6 +1367,20 @@ exit:
     return rv;
 }
 
+void
+_read_rowcount(cursorObject *curs)
+{
+    const char *rowcount;
+
+    rowcount = PQcmdTuples(curs->pgres);
+    Dprintf("_read_rowcount: PQcmdTuples = %s", rowcount);
+    if (!rowcount || !rowcount[0]) {
+        curs->rowcount = -1;
+    } else {
+        curs->rowcount = atol(rowcount);
+    }
+}
+
 static int
 _pq_copy_in_v3(cursorObject *curs)
 {
@@ -1362,6 +1390,13 @@ _pq_copy_in_v3(cursorObject *curs)
     PyObject *o, *func = NULL, *size = NULL;
     Py_ssize_t length = 0;
     int res, error = 0;
+
+    if (!curs->copyfile) {
+        PyErr_SetString(ProgrammingError,
+            "can't execute COPY FROM: use the copy_from() method instead");
+        error = 1;
+        goto exit;
+    }
 
     if (!(func = PyObject_GetAttrString(curs->copyfile, "read"))) {
         Dprintf("_pq_copy_in_v3: can't get o.read");
@@ -1445,7 +1480,7 @@ _pq_copy_in_v3(cursorObject *curs)
     else if (error == 2)
         res = PQputCopyEnd(curs->conn->pgconn, "error in PQputCopyData() call");
     else
-        /* XXX would be nice to propagate the exeption */
+        /* XXX would be nice to propagate the exception */
         res = PQputCopyEnd(curs->conn->pgconn, "error in .read() call");
 
     CLEARPGRES(curs->pgres);
@@ -1453,7 +1488,7 @@ _pq_copy_in_v3(cursorObject *curs)
     Dprintf("_pq_copy_in_v3: copy ended; res = %d", res);
 
     /* if the result is -1 we should not even try to get a result from the
-       bacause that will lock the current thread forever */
+       because that will lock the current thread forever */
     if (res == -1) {
         pq_raise(curs->conn, curs, NULL);
         /* FIXME: pq_raise check the connection but for some reason even
@@ -1470,6 +1505,7 @@ _pq_copy_in_v3(cursorObject *curs)
 
             if (NULL == curs->pgres)
                 break;
+            _read_rowcount(curs);
             if (PQresultStatus(curs->pgres) == PGRES_FATAL_ERROR)
                 pq_raise(curs->conn, curs, NULL);
             CLEARPGRES(curs->pgres);
@@ -1485,13 +1521,20 @@ exit:
 static int
 _pq_copy_out_v3(cursorObject *curs)
 {
-    PyObject *tmp = NULL, *func;
+    PyObject *tmp = NULL;
+    PyObject *func = NULL;
     PyObject *obj = NULL;
     int ret = -1;
     int is_text;
 
     char *buffer;
     Py_ssize_t len;
+
+    if (!curs->copyfile) {
+        PyErr_SetString(ProgrammingError,
+            "can't execute COPY TO: use the copy_to() method instead");
+        goto exit;
+    }
 
     if (!(func = PyObject_GetAttrString(curs->copyfile, "write"))) {
         Dprintf("_pq_copy_out_v3: can't get o.write");
@@ -1546,6 +1589,7 @@ _pq_copy_out_v3(cursorObject *curs)
 
         if (NULL == curs->pgres)
             break;
+        _read_rowcount(curs);
         if (PQresultStatus(curs->pgres) == PGRES_FATAL_ERROR)
             pq_raise(curs->conn, curs, NULL);
         CLEARPGRES(curs->pgres);
@@ -1561,7 +1605,6 @@ int
 pq_fetch(cursorObject *curs, int no_result)
 {
     int pgstatus, ex = -1;
-    const char *rowcount;
 
     /* even if we fail, we remove any information about the previous query */
     curs_reset(curs);
@@ -1593,11 +1636,7 @@ pq_fetch(cursorObject *curs, int no_result)
 
     case PGRES_COMMAND_OK:
         Dprintf("pq_fetch: command returned OK (no tuples)");
-        rowcount = PQcmdTuples(curs->pgres);
-        if (!rowcount || !rowcount[0])
-          curs->rowcount = -1;
-        else
-          curs->rowcount = atoi(rowcount);
+        _read_rowcount(curs);
         curs->lastoid = PQoidValue(curs->pgres);
         CLEARPGRES(curs->pgres);
         ex = 1;
@@ -1605,8 +1644,8 @@ pq_fetch(cursorObject *curs, int no_result)
 
     case PGRES_COPY_OUT:
         Dprintf("pq_fetch: data from a COPY TO (no tuples)");
-        ex = _pq_copy_out_v3(curs);
         curs->rowcount = -1;
+        ex = _pq_copy_out_v3(curs);
         /* error caught by out glorious notice handler */
         if (PyErr_Occurred()) ex = -1;
         CLEARPGRES(curs->pgres);
@@ -1614,8 +1653,8 @@ pq_fetch(cursorObject *curs, int no_result)
 
     case PGRES_COPY_IN:
         Dprintf("pq_fetch: data from a COPY FROM (no tuples)");
-        ex = _pq_copy_in_v3(curs);
         curs->rowcount = -1;
+        ex = _pq_copy_in_v3(curs);
         /* error caught by out glorious notice handler */
         if (PyErr_Occurred()) ex = -1;
         CLEARPGRES(curs->pgres);

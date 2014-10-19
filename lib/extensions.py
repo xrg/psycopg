@@ -83,7 +83,7 @@ STATUS_SYNC     = 3  # currently unused
 STATUS_ASYNC    = 4  # currently unused
 STATUS_PREPARED = 5
 
-# This is a usefull mnemonic to check if the connection is in a transaction
+# This is a useful mnemonic to check if the connection is in a transaction
 STATUS_IN_TRANSACTION = STATUS_BEGIN
 
 """psycopg asynchronous connection polling values"""
@@ -155,19 +155,21 @@ class NoneAdapter(object):
 
 
 # Create default json typecasters for PostgreSQL 9.2 oids
-from psycopg2._json import register_default_json
+from psycopg2._json import register_default_json, register_default_jsonb
 
 try:
     JSON, JSONARRAY = register_default_json()
+    JSONB, JSONBARRAY = register_default_jsonb()
 except ImportError:
     pass
 
-del register_default_json
+del register_default_json, register_default_jsonb
 
 
 # Create default Range typecasters
 from psycopg2. _range import Range
 del Range
+
 
 # Add the "cleaned" version of the encodings to the key.
 # When the encoding is set its name is cleaned up from - and _ and turned

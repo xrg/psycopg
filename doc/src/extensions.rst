@@ -25,7 +25,7 @@ functionalities defined by the |DBAPI|_.
 
 .. class:: cursor(conn, name=None)
 
-    It is the class usually returnded by the `connection.cursor()`
+    It is the class usually returned by the `connection.cursor()`
     method. It is exposed by the `extensions` module in order to allow
     subclassing to extend its behaviour: the subclass should be passed to the
     `!cursor()` method using the `cursor_factory` parameter. See
@@ -189,7 +189,7 @@ deal with Python objects adaptation:
 
 .. function:: adapt(obj)
 
-    Return the SQL representation of *obj* as a string.  Raise a
+    Return the SQL representation of *obj* as an `ISQLQuote`.  Raise a
     `~psycopg2.ProgrammingError` if how to adapt the object is unknown.
     In order to allow new objects to be adapted, register a new adapter for it
     using the `register_adapter()` function.
@@ -203,7 +203,7 @@ deal with Python objects adaptation:
     Register a new adapter for the objects of class *class*.
 
     *adapter* should be a function taking a single argument (the object
-    to adapt) and returning an object conforming the `ISQLQuote`
+    to adapt) and returning an object conforming to the `ISQLQuote`
     protocol (e.g. exposing a `!getquoted()` method).  The `AsIs` is
     often useful for this task.
 
@@ -352,8 +352,8 @@ details.
     `register_type()` to be used.
 
     :param oids: tuple of OIDs of the PostgreSQL type to convert. It should
-        probably be the oid of the array type (e.g. the ``typarray`` field in
-        the ``pg_type`` table.
+        probably contain the oid of the array type (e.g. the ``typarray``
+        field in the ``pg_type`` table).
     :param name: the name of the new type adapter.
     :param base_caster: a Psycopg typecaster, e.g. created using the
         `new_type()` function. The caster should be able to parse a single
@@ -366,11 +366,12 @@ details.
     .. note::
 
         The function can be used to create a generic array typecaster,
-        returning a list of strings: just use the `~psycopg2.STRING` as base
-        typecaster. For instance, if you want to receive from the database an
-        array of :sql:`macaddr`, each address represented by string, you can
-        use::
+        returning a list of strings: just use `psycopg2.STRING` as base
+        typecaster. For instance, if you want to receive an array of
+        :sql:`macaddr` from the database, each address represented by string,
+        you can use::
 
+            # select typarray from pg_type where typname = 'macaddr' -> 1040
             psycopg2.extensions.register_type(
                 psycopg2.extensions.new_array_type(
                     (1040,), 'MACADDR[]', psycopg2.STRING))
@@ -427,7 +428,7 @@ The module exports a few exceptions in addition to the :ref:`standard ones
 
     (subclasses `~psycopg2.OperationalError`)
 
-    Error causing transaction rollback (deadlocks, serialisation failures,
+    Error causing transaction rollback (deadlocks, serialization failures,
     etc).  It can be trapped specifically to detect a deadlock.
 
     .. versionadded:: 2.0.7
@@ -515,7 +516,7 @@ set to one of the following constants:
     :sql:`SERIALIZABLE` isolation level. This is the strictest transactions
     isolation level, equivalent to having the transactions executed serially
     rather than concurrently. However applications using this level must be
-    prepared to retry reansactions due to serialization failures.
+    prepared to retry transactions due to serialization failures.
 
     Starting from PostgreSQL 9.1, this mode monitors for conditions which
     could make execution of a concurrent set of serializable transactions

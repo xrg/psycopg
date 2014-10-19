@@ -233,11 +233,6 @@ list_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return type->tp_alloc(type, 0);
 }
 
-static PyObject *
-list_repr(listObject *self)
-{
-    return PyString_FromFormat("<psycopg2._psycopg.List object at %p>", self);
-}
 
 /* object type */
 
@@ -253,7 +248,7 @@ PyTypeObject listType = {
     0,          /*tp_getattr*/
     0,          /*tp_setattr*/
     0,          /*tp_compare*/
-    (reprfunc)list_repr, /*tp_repr*/
+    0,          /*tp_repr*/
     0,          /*tp_as_number*/
     0,          /*tp_as_sequence*/
     0,          /*tp_as_mapping*/
@@ -283,17 +278,3 @@ PyTypeObject listType = {
     0,          /*tp_alloc*/
     list_new, /*tp_new*/
 };
-
-
-/** module-level functions **/
-
-PyObject *
-psyco_List(PyObject *module, PyObject *args)
-{
-    PyObject *str;
-
-    if (!PyArg_ParseTuple(args, "O", &str))
-        return NULL;
-
-    return PyObject_CallFunctionObjArgs((PyObject *)&listType, "O", str, NULL);
-}

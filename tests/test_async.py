@@ -75,9 +75,9 @@ class AsyncTests(ConnectingTestCase):
             if state == psycopg2.extensions.POLL_OK:
                 break
             elif state == psycopg2.extensions.POLL_READ:
-                select.select([pollable], [], [])
+                select.select([pollable], [], [], 10)
             elif state == psycopg2.extensions.POLL_WRITE:
-                select.select([], [pollable], [])
+                select.select([], [pollable], [], 10)
             else:
                 raise Exception("Unexpected result from poll: %r", state)
 
@@ -448,6 +448,16 @@ class AsyncTests(ConnectingTestCase):
         cur.execute("select 42;");
         self.wait(self.conn)
         self.assertEqual(cur.fetchone(), (42,))
+
+    def test_async_connection_error_message(self):
+        try:
+            cnn = psycopg2.connect('dbname=thisdatabasedoesntexist', async=True)
+            self.wait(cnn)
+        except psycopg2.Error, e:
+            self.assertNotEqual(str(e), "asynchronous connection failed",
+                "connection error reason lost")
+        else:
+            self.fail("no exception raised")
 
 
 def test_suite():

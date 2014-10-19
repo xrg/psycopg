@@ -25,13 +25,16 @@
 import sys
 import string
 from testutils import unittest, ConnectingTestCase, decorate_all_tests
-from testutils import skip_if_no_iobase
+from testutils import skip_if_no_iobase, skip_before_postgres
 from cStringIO import StringIO
 from itertools import cycle, izip
+from subprocess import Popen, PIPE
 
 import psycopg2
 import psycopg2.extensions
-from testutils import skip_copy_if_green
+from testutils import skip_copy_if_green, script_to_py3
+from testconfig import dsn
+
 
 if sys.version_info[0] < 3:
     _base = object
@@ -199,6 +202,20 @@ class CopyTests(ConnectingTestCase):
         f.seek(0)
         self.assertEqual(f.readline().rstrip(), about)
 
+        # same tests with setting size
+        f = io.StringIO()
+        f.write(about)
+        f.seek(0)
+        exp_size = 123
+        # hack here to leave file as is, only check size when reading
+        real_read = f.read
+        def read(_size, f=f, exp_size=exp_size):
+            self.assertEqual(_size, exp_size)
+            return real_read(_size)
+        f.read = read
+        curs.copy_expert('COPY tcopy (data) FROM STDIN', f, size=exp_size)
+        curs.execute("select data from tcopy;")
+        self.assertEqual(curs.fetchone()[0], abin)
 
     def _copy_from(self, curs, nrecs, srec, copykw):
         f = StringIO()
@@ -258,6 +275,70 @@ class CopyTests(ConnectingTestCase):
         curs.execute("select count(*) from manycols;")
         self.assertEqual(curs.fetchone()[0], 2)
 
+    @skip_before_postgres(8, 2) # they don't send the count
+    def test_copy_rowcount(self):
+        curs = self.conn.cursor()
+
+        curs.copy_from(StringIO('aaa\nbbb\nccc\n'), 'tcopy', columns=['data'])
+        self.assertEqual(curs.rowcount, 3)
+
+        curs.copy_expert(
+            "copy tcopy (data) from stdin",
+            StringIO('ddd\neee\n'))
+        self.assertEqual(curs.rowcount, 2)
+
+        curs.copy_to(StringIO(), "tcopy")
+        self.assertEqual(curs.rowcount, 5)
+
+        curs.execute("insert into tcopy (data) values ('fff')")
+        curs.copy_expert("copy tcopy to stdout", StringIO())
+        self.assertEqual(curs.rowcount, 6)
+
+    def test_copy_rowcount_error(self):
+        curs = self.conn.cursor()
+
+        curs.execute("insert into tcopy (data) values ('fff')")
+        self.assertEqual(curs.rowcount, 1)
+
+        self.assertRaises(psycopg2.DataError,
+            curs.copy_from, StringIO('aaa\nbbb\nccc\n'), 'tcopy')
+        self.assertEqual(curs.rowcount, -1)
+
+    def test_copy_from_segfault(self):
+        # issue #219
+        script = ("""\
+import psycopg2
+conn = psycopg2.connect(%(dsn)r)
+curs = conn.cursor()
+curs.execute("create table copy_segf (id int)")
+try:
+    curs.execute("copy copy_segf from stdin")
+except psycopg2.ProgrammingError:
+    pass
+conn.close()
+""" % { 'dsn': dsn,})
+
+        proc = Popen([sys.executable, '-c', script_to_py3(script)])
+        proc.communicate()
+        self.assertEqual(0, proc.returncode)
+
+    def test_copy_to_segfault(self):
+        # issue #219
+        script = ("""\
+import psycopg2
+conn = psycopg2.connect(%(dsn)r)
+curs = conn.cursor()
+curs.execute("create table copy_segf (id int)")
+try:
+    curs.execute("copy copy_segf to stdout")
+except psycopg2.ProgrammingError:
+    pass
+conn.close()
+""" % { 'dsn': dsn,})
+
+        proc = Popen([sys.executable, '-c', script_to_py3(script)], stdout=PIPE)
+        proc.communicate()
+        self.assertEqual(0, proc.returncode)
 
 decorate_all_tests(CopyTests, skip_copy_if_green)
 

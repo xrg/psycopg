@@ -35,9 +35,6 @@
 #include <string.h>
 
 
-extern HIDDEN PyObject *pyPsycopgTzModule;
-extern HIDDEN PyObject *pyPsycopgTzLOCAL;
-
 int
 psyco_adapter_datetime_init(void)
 {
@@ -214,12 +211,6 @@ pydatetime_new(PyTypeObject *type, PyObject *args, PyObject *kwds)
     return type->tp_alloc(type, 0);
 }
 
-static PyObject *
-pydatetime_repr(pydatetimeObject *self)
-{
-    return PyString_FromFormat("<psycopg2._psycopg.datetime object at %p>",
-                                self);
-}
 
 /* object type */
 
@@ -235,7 +226,7 @@ PyTypeObject pydatetimeType = {
     0,          /*tp_getattr*/
     0,          /*tp_setattr*/
     0,          /*tp_compare*/
-    (reprfunc)pydatetime_repr, /*tp_repr*/
+    0,          /*tp_repr*/
     0,          /*tp_as_number*/
     0,          /*tp_as_sequence*/
     0,          /*tp_as_mapping*/
@@ -392,9 +383,9 @@ psyco_DateFromTicks(PyObject *self, PyObject *args)
             Py_DECREF(args);
         }
     }
-	else {
-		PyErr_SetString(InterfaceError, "failed localtime call");
-	}
+    else {
+        PyErr_SetString(InterfaceError, "failed localtime call");
+    }
 
     return res;
 }
@@ -420,9 +411,9 @@ psyco_TimeFromTicks(PyObject *self, PyObject *args)
             Py_DECREF(args);
         }
     }
-	else {
-		PyErr_SetString(InterfaceError, "failed localtime call");
-	}
+    else {
+        PyErr_SetString(InterfaceError, "failed localtime call");
+    }
 
     return res;
 }
@@ -430,6 +421,8 @@ psyco_TimeFromTicks(PyObject *self, PyObject *args)
 PyObject *
 psyco_TimestampFromTicks(PyObject *self, PyObject *args)
 {
+    PyObject *m = NULL;
+    PyObject *tz = NULL;
     PyObject *res = NULL;
     struct tm tm;
     time_t t;
@@ -438,18 +431,25 @@ psyco_TimestampFromTicks(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "d", &ticks))
         return NULL;
 
+    /* get psycopg2.tz.LOCAL from pythonland */
+    if (!(m = PyImport_ImportModule("psycopg2.tz"))) { goto exit; }
+    if (!(tz = PyObject_GetAttrString(m, "LOCAL"))) { goto exit; }
+
     t = (time_t)floor(ticks);
     ticks -= (double)t;
-    if (localtime_r(&t, &tm)) {
-        res = _psyco_Timestamp(
-            tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-            tm.tm_hour, tm.tm_min, (double)tm.tm_sec + ticks,
-            pyPsycopgTzLOCAL);
+    if (!localtime_r(&t, &tm)) {
+        PyErr_SetString(InterfaceError, "failed localtime call");
+        goto exit;
     }
-	else {
-		PyErr_SetString(InterfaceError, "failed localtime call");
-	}
 
+    res = _psyco_Timestamp(
+        tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+        tm.tm_hour, tm.tm_min, (double)tm.tm_sec + ticks,
+        tz);
+
+exit:
+    Py_DECREF(tz);
+    Py_XDECREF(m);
     return res;
 }
 

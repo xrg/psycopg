@@ -1,4 +1,4 @@
-# encoding.py - show to change client enkoding (and test it works)
+# encoding.py - show to change client encoding (and test it works)
 # -*- encoding: utf8 -*-
 #
 # Copyright (C) 2004-2010 Federico Di Gregorio  <fog@debian.org>
@@ -26,7 +26,7 @@ import psycopg2.extensions
 if len(sys.argv) > 1:
     DSN = sys.argv[1]
 
-print "Opening connection using dns:", DSN
+print "Opening connection using dsn:", DSN
 conn = psycopg2.connect(DSN)
 print "Initial encoding for this connection is", conn.encoding
 

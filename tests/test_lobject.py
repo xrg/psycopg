@@ -77,6 +77,10 @@ class LargeObjectTests(LargeObjectTestCase):
         self.assertNotEqual(lo, None)
         self.assertEqual(lo.mode[0], "w")
 
+    def test_connection_needed(self):
+        self.assertRaises(TypeError,
+            psycopg2.extensions.lobject, [])
+
     def test_open_non_existent(self):
         # By creating then removing a large object, we get an Oid that
         # should be unused.
@@ -126,6 +130,7 @@ class LargeObjectTests(LargeObjectTestCase):
 
         self.assertRaises(psycopg2.OperationalError,
                           self.conn.lobject, 0, "w", lo.oid)
+        self.assert_(not self.conn.closed)
 
     def test_import(self):
         self.tmpdir = tempfile.mkdtemp()
@@ -369,6 +374,12 @@ class LargeObjectTests(LargeObjectTestCase):
         finally:
             self.conn.tpc_commit()
 
+    def test_large_oid(self):
+        # Test we don't overflow with an oid not fitting a signed int
+        try:
+            self.conn.lobject(0xFFFFFFFE)
+        except psycopg2.OperationalError:
+            pass
 
 decorate_all_tests(LargeObjectTests, skip_if_no_lo, skip_lo_if_green)
 

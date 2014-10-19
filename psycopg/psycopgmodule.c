@@ -59,11 +59,6 @@
 #include "psycopg/adapter_datetime.h"
 HIDDEN PyObject *pyDateTimeModuleP = NULL;
 
-/* pointers to the psycopg.tz classes */
-HIDDEN PyObject *pyPsycopgTzModule = NULL;
-HIDDEN PyObject *pyPsycopgTzLOCAL = NULL;
-HIDDEN PyObject *pyPsycopgTzFixedOffsetTimezone = NULL;
-
 HIDDEN PyObject *psycoEncodings = NULL;
 
 #ifdef PSYCOPG_DEBUG
@@ -399,9 +394,7 @@ exit:
 PyObject *Error, *Warning, *InterfaceError, *DatabaseError,
     *InternalError, *OperationalError, *ProgrammingError,
     *IntegrityError, *DataError, *NotSupportedError;
-#ifdef PSYCOPG_EXTENSIONS
 PyObject *QueryCanceledError, *TransactionRollbackError;
-#endif
 
 /* mapping between exception names and their PyObject */
 static struct {
@@ -424,13 +417,11 @@ static struct {
     { "psycopg2.DataError", &DataError, &DatabaseError, DataError_doc },
     { "psycopg2.NotSupportedError", &NotSupportedError, &DatabaseError,
         NotSupportedError_doc },
-#ifdef PSYCOPG_EXTENSIONS
     { "psycopg2.extensions.QueryCanceledError", &QueryCanceledError,
       &OperationalError, QueryCanceledError_doc },
     { "psycopg2.extensions.TransactionRollbackError",
       &TransactionRollbackError, &OperationalError,
       TransactionRollbackError_doc },
-#endif
     {NULL}  /* Sentinel */
 };
 
@@ -438,7 +429,7 @@ static struct {
 static int
 psyco_errors_init(void)
 {
-    /* the names of the exceptions here reflect the oranization of the
+    /* the names of the exceptions here reflect the organization of the
        psycopg2 module and not the fact the the original error objects
        live in _psycopg */
 
@@ -679,20 +670,6 @@ static PyMethodDef psycopgMethods[] = {
     {"new_array_type", (PyCFunction)typecast_array_from_python,
      METH_VARARGS|METH_KEYWORDS, typecast_array_from_python_doc},
 
-    {"AsIs",  (PyCFunction)psyco_AsIs,
-     METH_VARARGS, psyco_AsIs_doc},
-    {"QuotedString",  (PyCFunction)psyco_QuotedString,
-     METH_VARARGS, psyco_QuotedString_doc},
-    {"Boolean",  (PyCFunction)psyco_Boolean,
-     METH_VARARGS, psyco_Boolean_doc},
-    {"Int",  (PyCFunction)psyco_Int,
-     METH_VARARGS, psyco_Int_doc},
-    {"Float",  (PyCFunction)psyco_Float,
-     METH_VARARGS, psyco_Float_doc},
-    {"Decimal",  (PyCFunction)psyco_Decimal,
-     METH_VARARGS, psyco_Decimal_doc},
-    {"Binary",  (PyCFunction)psyco_Binary,
-     METH_VARARGS, psyco_Binary_doc},
     {"Date",  (PyCFunction)psyco_Date,
      METH_VARARGS, psyco_Date_doc},
     {"Time",  (PyCFunction)psyco_Time,
@@ -705,8 +682,6 @@ static PyMethodDef psycopgMethods[] = {
      METH_VARARGS, psyco_TimeFromTicks_doc},
     {"TimestampFromTicks",  (PyCFunction)psyco_TimestampFromTicks,
      METH_VARARGS, psyco_TimestampFromTicks_doc},
-    {"List",  (PyCFunction)psyco_List,
-     METH_VARARGS, psyco_List_doc},
 
     {"DateFromPy",  (PyCFunction)psyco_DateFromPy,
      METH_VARARGS, psyco_DateFromPy_doc},
@@ -729,12 +704,10 @@ static PyMethodDef psycopgMethods[] = {
      METH_VARARGS, psyco_IntervalFromMx_doc},
 #endif
 
-#ifdef PSYCOPG_EXTENSIONS
     {"set_wait_callback",  (PyCFunction)psyco_set_wait_callback,
      METH_O, psyco_set_wait_callback_doc},
     {"get_wait_callback",  (PyCFunction)psyco_get_wait_callback,
      METH_NOARGS, psyco_get_wait_callback_doc},
-#endif
 
     {NULL, NULL, 0, NULL}        /* Sentinel */
 };
@@ -829,10 +802,8 @@ INIT_MODULE(_psycopg)(void)
     Py_TYPE(&diagnosticsType) = &PyType_Type;
     if (PyType_Ready(&diagnosticsType) == -1) goto exit;
 
-#ifdef PSYCOPG_EXTENSIONS
     Py_TYPE(&lobjectType) = &PyType_Type;
     if (PyType_Ready(&lobjectType) == -1) goto exit;
-#endif
 
     /* import mx.DateTime module, if necessary */
 #ifdef HAVE_MXDATETIME
@@ -865,18 +836,6 @@ INIT_MODULE(_psycopg)(void)
 
     Py_TYPE(&pydatetimeType) = &PyType_Type;
     if (PyType_Ready(&pydatetimeType) == -1) goto exit;
-
-    /* import psycopg2.tz anyway (TODO: replace with C-level module?) */
-    pyPsycopgTzModule = PyImport_ImportModule("psycopg2.tz");
-    if (pyPsycopgTzModule == NULL) {
-        Dprintf("initpsycopg: can't import psycopg2.tz module");
-        PyErr_SetString(PyExc_ImportError, "can't import psycopg2.tz module");
-        goto exit;
-    }
-    pyPsycopgTzLOCAL =
-        PyObject_GetAttrString(pyPsycopgTzModule, "LOCAL");
-    pyPsycopgTzFixedOffsetTimezone =
-        PyObject_GetAttrString(pyPsycopgTzModule, "FixedOffsetTimezone");
 
     /* initialize the module and grab module's dictionary */
 #if PY_MAJOR_VERSION < 3
@@ -921,9 +880,15 @@ INIT_MODULE(_psycopg)(void)
     PyModule_AddObject(module, "Notify", (PyObject*)&notifyType);
     PyModule_AddObject(module, "Xid", (PyObject*)&xidType);
     PyModule_AddObject(module, "Diagnostics", (PyObject*)&diagnosticsType);
-#ifdef PSYCOPG_EXTENSIONS
+    PyModule_AddObject(module, "AsIs", (PyObject*)&asisType);
+    PyModule_AddObject(module, "Binary", (PyObject*)&binaryType);
+    PyModule_AddObject(module, "Boolean", (PyObject*)&pbooleanType);
+    PyModule_AddObject(module, "Decimal", (PyObject*)&pdecimalType);
+    PyModule_AddObject(module, "Int", (PyObject*)&pintType);
+    PyModule_AddObject(module, "Float", (PyObject*)&pfloatType);
+    PyModule_AddObject(module, "List", (PyObject*)&listType);
+    PyModule_AddObject(module, "QuotedString", (PyObject*)&qstringType);
     PyModule_AddObject(module, "lobject", (PyObject*)&lobjectType);
-#endif
 
     /* encodings dictionary in module dictionary */
     PyModule_AddObject(module, "encodings", psycoEncodings);

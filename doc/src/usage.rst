@@ -100,7 +100,8 @@ many placeholders can use the same values::
     ...     {'int': 10, 'str': "O'Reilly", 'date': datetime.date(2005, 11, 18)})
 
 When parameters are used, in order to include a literal ``%`` in the query you
-can use the ``%%`` string.
+can use the ``%%`` string. Using characters ``%``, ``(``, ``)`` in the
+argument names is not supported.
 
 While the mechanism resembles regular Python strings manipulation, there are a
 few subtle differences you should care about when passing parameters to a
@@ -144,13 +145,15 @@ query:
 The problem with the query parameters
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The SQL representation for many data types is often not the same of the Python
-string representation.  The classic example is with single quotes in
-strings: SQL uses them as string constants bounds and requires them to be
-escaped, whereas in Python single quotes can be left unescaped in strings
-bounded by double quotes. For this reason a naïve approach to the composition
-of query strings, e.g. using string concatenation, is a recipe for terrible
-problems::
+The SQL representation of many data types is often different from their Python
+string representation. The typical example is with single quotes in strings:
+in SQL single quotes are used as string literal delimiters, so the ones
+appearing inside the string itself must be escaped, whereas in Python single
+quotes can be left unescaped if the string is delimited by double quotes.
+
+Because of the difference, sometime subtle, between the data types
+representations, a naïve approach to query strings composition, such as using
+Python strings concatenation, is a recipe for *terrible* problems::
 
     >>> SQL = "INSERT INTO authors (name) VALUES ('%s');" # NEVER DO THIS
     >>> data = ("O'Reilly", )
@@ -159,13 +162,13 @@ problems::
     LINE 1: INSERT INTO authors (name) VALUES ('O'Reilly')
                                                   ^
 
-If the variable containing the data to be sent to the database comes from an
-untrusted source (e.g. a form published on a web site) an attacker could
+If the variables containing the data to send to the database come from an
+untrusted source (such as a form published on a web site) an attacker could
 easily craft a malformed string, either gaining access to unauthorized data or
 performing destructive operations on the database. This form of attack is
 called `SQL injection`_ and is known to be one of the most widespread forms of
-attack to servers. Before continuing, please print `this page`__ as a memo and
-hang it onto your desk.
+attack to database servers. Before continuing, please print `this page`__ as a
+memo and hang it onto your desk.
 
 .. _SQL injection: http://en.wikipedia.org/wiki/SQL_injection
 .. __: http://xkcd.com/327/
@@ -298,8 +301,8 @@ proper SQL literals::
 Numbers adaptation
 ^^^^^^^^^^^^^^^^^^
 
-Numeric objects: `int`, `long`, `float`, `~decimal.Decimal` are converted in
-the PostgreSQL numerical representation::
+Python numeric objects `int`, `long`, `float`, `~decimal.Decimal` are
+converted into a PostgreSQL numerical representation::
 
     >>> cur.mogrify("SELECT %s, %s, %s, %s;", (10, 10L, 10.0, Decimal("10.00")))
     'SELECT 10, 10, 10.0, 10.00;'
@@ -311,7 +314,7 @@ converted into `!Decimal`.
 .. note::
 
     Sometimes you may prefer to receive :sql:`numeric` data as `!float`
-    insted, for performance reason or ease of manipulation: you can configure
+    instead, for performance reason or ease of manipulation: you can configure
     an adapter to :ref:`cast PostgreSQL numeric to Python float <faq-float>`.
     This of course may imply a loss of precision.
 
@@ -422,7 +425,7 @@ the connection or globally: see the function
 Binary adaptation
 ^^^^^^^^^^^^^^^^^
 
-Binary types: Python types representing binary objects are converted into
+Python types representing binary objects are converted into
 PostgreSQL binary string syntax, suitable for :sql:`bytea` fields.   Such
 types are `buffer` (only available in Python 2), `memoryview` (available
 from Python 2.7), `bytearray` (available from Python 2.6) and `bytes`
@@ -477,7 +480,7 @@ or `!memoryview` (in Python 3).
 Date/Time objects adaptation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Date and time objects: builtin `~datetime.datetime`, `~datetime.date`,
+Python builtin `~datetime.datetime`, `~datetime.date`,
 `~datetime.time`,  `~datetime.timedelta` are converted into PostgreSQL's
 :sql:`timestamp[tz]`, :sql:`date`, :sql:`time`, :sql:`interval` data types.
 Time zones are supported too.  The Egenix `mx.DateTime`_ objects are adapted
@@ -495,6 +498,7 @@ the same way::
 
 .. seealso:: `PostgreSQL date/time types
     <http://www.postgresql.org/docs/current/static/datatype-datetime.html>`__
+
 
 .. index::
     single: Time Zones
@@ -530,6 +534,40 @@ rounded to the nearest minute, with an error of up to 30 seconds.
     versions use `psycopg2.extras.register_tstz_w_secs()`.
 
 
+.. index::
+    double: Date objects; Infinite
+
+.. _infinite-dates-handling:
+
+Infinite dates handling
+'''''''''''''''''''''''
+
+PostgreSQL can store the representation of an "infinite" date, timestamp, or
+interval. Infinite dates are not available to Python, so these objects are
+mapped to `!date.max`, `!datetime.max`, `!interval.max`. Unfortunately the
+mapping cannot be bidirectional so these dates will be stored back into the
+database with their values, such as :sql:`9999-12-31`.
+
+It is possible to create an alternative adapter for dates and other objects
+to map `date.max` to :sql:`infinity`, for instance::
+
+    class InfDateAdapter:
+        def __init__(self, wrapped):
+            self.wrapped = wrapped
+        def getquoted(self):
+            if self.wrapped == datetime.date.max:
+                return b"'infinity'::date"
+            elif self.wrapped == datetime.date.min:
+                return b"'-infinity'::date"
+            else:
+                return psycopg2.extensions.DateFromPy(self.wrapped).getquoted()
+
+    psycopg2.extensions.register_adapter(datetime.date, InfDateAdapter)
+
+Of course it will not be possible to write the value of `date.max` in the
+database anymore: :sql:`infinity` will be stored instead.
+
+
 .. _adapt-list:
 
 Lists adaptation
@@ -560,7 +598,7 @@ Python lists are converted into PostgreSQL :sql:`ARRAY`\ s::
 .. note::
 
     Reading back from PostgreSQL, arrays are converted to lists of Python
-    objects as expected, but only if the items are of a known known type.
+    objects as expected, but only if the items are of a known type.
     Arrays of unknown types are returned as represented by the database (e.g.
     ``{a,b,c}``). If you want to convert the items into Python objects you can
     easily create a typecaster for :ref:`array of unknown types
@@ -576,7 +614,7 @@ Tuples adaptation
     double: Tuple; Adaptation
     single: IN operator
 
-Python tuples are converted in a syntax suitable for the SQL :sql:`IN`
+Python tuples are converted into a syntax suitable for the SQL :sql:`IN`
 operator and to represent a composite type::
 
     >>> cur.mogrify("SELECT %s IN %s;", (10, (10, 20, 30)))

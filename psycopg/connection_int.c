@@ -226,7 +226,7 @@ conn_get_standard_conforming_strings(PGconn *pgconn)
      * The presence of the 'standard_conforming_strings' parameter
      * means that the server _accepts_ the E'' quote.
      *
-     * If the paramer is off, the PQescapeByteaConn returns
+     * If the parameter is off, the PQescapeByteaConn returns
      * backslash escaped strings (e.g. '\001' -> "\\001"),
      * so the E'' quotes are required to avoid warnings
      * if 'escape_string_warning' is set.
@@ -506,10 +506,6 @@ conn_setup(connectionObject *self, PGconn *pgconn)
     pthread_mutex_lock(&self->lock);
     Py_BLOCK_THREADS;
 
-    if (psyco_green() && (0 > pq_set_non_blocking(self, 1))) {
-        return -1;
-    }
-
     if (!conn_is_datestyle_ok(self->pgconn)) {
         int res;
         Py_UNBLOCK_THREADS;
@@ -573,6 +569,9 @@ _conn_sync_connect(connectionObject *self)
 
     /* if the connection is green, wait to finish connection */
     if (green) {
+        if (0 > pq_set_non_blocking(self, 1)) {
+            return -1;
+        }
         if (0 != psyco_wait(self)) {
             return -1;
         }
@@ -614,6 +613,11 @@ _conn_async_connect(connectionObject *self)
 
     PQsetNoticeProcessor(pgconn, conn_notice_callback, (void*)self);
 
+    /* Set the connection to nonblocking now. */
+    if (pq_set_non_blocking(self, 1) != 0) {
+        return -1;
+    }
+
     /* The connection will be completed banging on poll():
      * First with _conn_poll_connecting() that will finish connection,
      * then with _conn_poll_setup_async() that will do the same job
@@ -625,14 +629,23 @@ _conn_async_connect(connectionObject *self)
 int
 conn_connect(connectionObject *self, long int async)
 {
-   if (async == 1) {
+    int rv;
+
+    if (async == 1) {
       Dprintf("con_connect: connecting in ASYNC mode");
-      return _conn_async_connect(self);
+      rv = _conn_async_connect(self);
     }
     else {
       Dprintf("con_connect: connecting in SYNC mode");
-      return _conn_sync_connect(self);
+      rv = _conn_sync_connect(self);
     }
+
+    if (rv != 0) {
+        /* connection failed, so let's close ourselves */
+        self->closed = 2;
+    }
+
+    return rv;
 }
 
 
@@ -642,6 +655,7 @@ static int
 _conn_poll_connecting(connectionObject *self)
 {
     int res = PSYCO_POLL_ERROR;
+    const char *msg;
 
     Dprintf("conn_poll: poll connecting");
     switch (PQconnectPoll(self->pgconn)) {
@@ -656,7 +670,11 @@ _conn_poll_connecting(connectionObject *self)
         break;
     case PGRES_POLLING_FAILED:
     case PGRES_POLLING_ACTIVE:
-        PyErr_SetString(OperationalError, "asynchronous connection failed");
+        msg = PQerrorMessage(self->pgconn);
+        if (!(msg && *msg)) {
+            msg = "asynchronous connection failed";
+        }
+        PyErr_SetString(OperationalError, msg);
         res = PSYCO_POLL_ERROR;
         break;
     }
@@ -783,11 +801,6 @@ _conn_poll_setup_async(connectionObject *self)
 
     switch (self->status) {
     case CONN_STATUS_CONNECTING:
-        /* Set the connection to nonblocking now. */
-        if (pq_set_non_blocking(self, 1) != 0) {
-            break;
-        }
-
         self->equote = conn_get_standard_conforming_strings(self->pgconn);
         self->protocol = conn_get_protocol_version(self->pgconn);
         self->server_version = conn_get_server_version(self->pgconn);
@@ -1177,7 +1190,7 @@ conn_set_client_encoding(connectionObject *self, const char *enc)
         goto endlock;
     }
 
-    /* no error, we can proceeed and store the new encoding */
+    /* no error, we can proceed and store the new encoding */
     {
         char *tmp = self->encoding;
         self->encoding = clean_enc;

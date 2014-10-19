@@ -27,7 +27,7 @@ import psycopg2
 import psycopg2.extensions
 from psycopg2.extensions import b
 from testutils import unittest, ConnectingTestCase, skip_before_postgres
-from testutils import skip_if_no_namedtuple
+from testutils import skip_if_no_namedtuple, skip_if_no_getrefcount
 
 class CursorTests(ConnectingTestCase):
 
@@ -97,6 +97,7 @@ class CursorTests(ConnectingTestCase):
         self.assertEqual(b('SELECT 10.3;'),
             cur.mogrify("SELECT %s;", (Decimal("10.3"),)))
 
+    @skip_if_no_getrefcount
     def test_mogrify_leak_on_multiple_reference(self):
         # issue #81: reference leak when a parameter value is referenced
         # more than once from a dict.
@@ -157,6 +158,7 @@ class CursorTests(ConnectingTestCase):
         curs = self.conn.cursor()
         w = ref(curs)
         del curs
+        import gc; gc.collect()
         self.assert_(w() is None)
 
     def test_null_name(self):
@@ -174,10 +176,7 @@ class CursorTests(ConnectingTestCase):
         curs.execute("select data from invname order by data")
         self.assertEqual(curs.fetchall(), [(10,), (20,), (30,)])
 
-    def test_withhold(self):
-        self.assertRaises(psycopg2.ProgrammingError, self.conn.cursor,
-                          withhold=True)
-
+    def _create_withhold_table(self):
         curs = self.conn.cursor()
         try:
             curs.execute("drop table withhold")
@@ -188,6 +187,11 @@ class CursorTests(ConnectingTestCase):
             curs.execute("insert into withhold values (%s)", (i,))
         curs.close()
 
+    def test_withhold(self):
+        self.assertRaises(psycopg2.ProgrammingError, self.conn.cursor,
+                          withhold=True)
+
+        self._create_withhold_table()
         curs = self.conn.cursor("W")
         self.assertEqual(curs.withhold, False);
         curs.withhold = True
@@ -206,6 +210,52 @@ class CursorTests(ConnectingTestCase):
         curs = self.conn.cursor()
         curs.execute("drop table withhold")
         self.conn.commit()
+
+    def test_withhold_no_begin(self):
+        self._create_withhold_table()
+        curs = self.conn.cursor("w", withhold=True)
+        curs.execute("select data from withhold order by data")
+        self.assertEqual(curs.fetchone(), (10,))
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_BEGIN)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_INTRANS)
+
+        self.conn.commit()
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
+
+        self.assertEqual(curs.fetchone(), (20,))
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
+
+        curs.close()
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
+
+    def test_withhold_autocommit(self):
+        self._create_withhold_table()
+        self.conn.commit()
+        self.conn.autocommit = True
+        curs = self.conn.cursor("w", withhold=True)
+        curs.execute("select data from withhold order by data")
+
+        self.assertEqual(curs.fetchone(), (10,))
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
+
+        self.conn.commit()
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
+
+        curs.close()
+        self.assertEqual(self.conn.status, psycopg2.extensions.STATUS_READY)
+        self.assertEqual(self.conn.get_transaction_status(),
+                         psycopg2.extensions.TRANSACTION_STATUS_IDLE)
 
     def test_scrollable(self):
         self.assertRaises(psycopg2.ProgrammingError, self.conn.cursor,
@@ -400,7 +450,7 @@ class CursorTests(ConnectingTestCase):
 
     @skip_before_postgres(8, 0)
     def test_scroll_named(self):
-        cur = self.conn.cursor()
+        cur = self.conn.cursor('tmp', scrollable=True)
         cur.execute("select generate_series(0,9)")
         cur.scroll(2)
         self.assertEqual(cur.fetchone(), (2,))
@@ -410,8 +460,24 @@ class CursorTests(ConnectingTestCase):
         self.assertEqual(cur.fetchone(), (8,))
         cur.scroll(9, mode='absolute')
         self.assertEqual(cur.fetchone(), (9,))
-        self.assertRaises((IndexError, psycopg2.ProgrammingError),
-            cur.scroll, 10, mode='absolute')
+
+    def test_bad_subclass(self):
+        # check that we get an error message instead of a segfault
+        # for badly written subclasses.
+        # see http://stackoverflow.com/questions/22019341/
+        class StupidCursor(psycopg2.extensions.cursor):
+            def __init__(self, *args, **kwargs):
+                # I am stupid so not calling superclass init
+                pass
+
+        cur = StupidCursor()
+        self.assertRaises(psycopg2.InterfaceError, cur.execute, 'select 1')
+        self.assertRaises(psycopg2.InterfaceError, cur.executemany,
+            'select 1', [])
+
+    def test_callproc_badparam(self):
+        cur = self.conn.cursor()
+        self.assertRaises(TypeError, cur.callproc, 'lower', 42)
 
 
 def test_suite():

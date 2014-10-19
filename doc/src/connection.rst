@@ -295,8 +295,8 @@ The ``connection`` class
 
     .. attribute:: closed
 
-        Read-only attribute reporting whether the database connection is open
-        (0) or closed (1).
+        Read-only integer attribute: 0 if the connection is open, nonzero if
+        it is closed or broken.
 
 
     .. method:: cancel
@@ -348,7 +348,7 @@ The ``connection`` class
         pair: Transaction; Autocommit
         pair: Transaction; Isolation level
 
-    .. method:: set_session([isolation_level,] [readonly,] [deferrable,] [autocommit])
+    .. method:: set_session(isolation_level=None, readonly=None, deferrable=None, autocommit=None)
 
         Set one or more parameters for the next transactions or statements in
         the current session. See |SET TRANSACTION|_ for further details.
@@ -370,6 +370,7 @@ The ``connection`` class
             PostgreSQL session setting but an alias for setting the
             `autocommit` attribute.
 
+        Parameter passed as `!None` (the default for all) will not be changed.
         The parameters *isolation_level*, *readonly* and *deferrable* also
         accept the string ``DEFAULT`` as a value: the effect is to reset the
         parameter to the server default.
@@ -613,6 +614,8 @@ The ``connection`` class
         `psycopg2.extensions`: see :ref:`connection-status-constants`
         for the available values.
 
+        The status is undefined for `closed` connectons.
+
 
     .. method:: lobject([oid [, mode [, new_oid [, new_file [, lobject_factory]]]]])
 
@@ -678,7 +681,7 @@ The ``connection`` class
 
         Return one of the constants defined in :ref:`poll-constants`. If it
         returns `~psycopg2.extensions.POLL_OK` then the connection has been
-        estabilished or the query results are available on the client.
+        established or the query results are available on the client.
         Otherwise wait until the file descriptor returned by `fileno()` is
         ready to read or to write, as explained in :ref:`async-support`.
         `poll()` should be also used by the function installed by

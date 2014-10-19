@@ -35,8 +35,6 @@
 #include <string.h>
 
 
-#ifdef PSYCOPG_EXTENSIONS
-
 /** public methods **/
 
 /* close method - close the lobject */
@@ -52,7 +50,7 @@ psyco_lobj_close(lobjectObject *self, PyObject *args)
        opened large objects */
     if (!lobject_is_closed(self)
         && !self->conn->autocommit
-	&& self->conn->mark == self->mark)
+        && self->conn->mark == self->mark)
     {
         Dprintf("psyco_lobj_close: closing lobject at %p", self);
         if (lobject_close(self) < 0)
@@ -171,14 +169,14 @@ psyco_lobj_seek(lobjectObject *self, PyObject *args)
     int pos=0;
 
     if (!PyArg_ParseTuple(args, "i|i", &offset, &whence))
-    	return NULL;
+        return NULL;
 
     EXC_IF_LOBJ_CLOSED(self);
     EXC_IF_LOBJ_LEVEL0(self);
     EXC_IF_LOBJ_UNMARKED(self);
 
     if ((pos = lobject_seek(self, offset, whence)) < 0)
-    	return NULL;
+        return NULL;
 
     return PyInt_FromLong((long)pos);
 }
@@ -198,7 +196,7 @@ psyco_lobj_tell(lobjectObject *self, PyObject *args)
     EXC_IF_LOBJ_UNMARKED(self);
 
     if ((pos = lobject_tell(self)) < 0)
-    	return NULL;
+        return NULL;
 
     return PyInt_FromLong((long)pos);
 }
@@ -272,8 +270,6 @@ psyco_lobj_truncate(lobjectObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
-#endif /* PG_VERSION_HEX >= 0x080300 */
-
 
 /** the lobject object **/
 
@@ -333,10 +329,9 @@ lobject_setup(lobjectObject *self, connectionObject *conn,
         return -1;
     }
 
+    Py_INCREF((PyObject*)conn);
     self->conn = conn;
     self->mark = conn->mark;
-
-    Py_INCREF((PyObject*)self->conn);
 
     self->fd = -1;
     self->oid = InvalidOid;
@@ -355,9 +350,11 @@ lobject_dealloc(PyObject* obj)
 {
     lobjectObject *self = (lobjectObject *)obj;
 
-    if (lobject_close(self) < 0)
-        PyErr_Print();
-    Py_XDECREF((PyObject*)self->conn);
+    if (self->conn && self->fd != -1) {
+        if (lobject_close(self) < 0)
+            PyErr_Print();
+    }
+    Py_CLEAR(self->conn);
     PyMem_Free(self->smode);
 
     Dprintf("lobject_dealloc: deleted lobject object at %p, refcnt = "
@@ -369,17 +366,18 @@ lobject_dealloc(PyObject* obj)
 static int
 lobject_init(PyObject *obj, PyObject *args, PyObject *kwds)
 {
-    int oid = (int)InvalidOid, new_oid = (int)InvalidOid;
+    Oid oid = InvalidOid, new_oid = InvalidOid;
     const char *smode = "";
     const char *new_file = NULL;
-    PyObject *conn;
+    PyObject *conn = NULL;
 
-    if (!PyArg_ParseTuple(args, "O|iziz",
-         &conn, &oid, &smode, &new_oid, &new_file))
+    if (!PyArg_ParseTuple(args, "O!|IzIz",
+         &connectionType, &conn,
+         &oid, &smode, &new_oid, &new_file))
         return -1;
 
     return lobject_setup((lobjectObject *)obj,
-        (connectionObject *)conn, (Oid)oid, smode, (Oid)new_oid, new_file);
+        (connectionObject *)conn, oid, smode, new_oid, new_file);
 }
 
 static PyObject *
@@ -403,7 +401,7 @@ lobject_repr(lobjectObject *self)
 
 PyTypeObject lobjectType = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "psycopg2._psycopg.lobject",
+    "psycopg2.extensions.lobject",
     sizeof(lobjectObject), 0,
     lobject_dealloc, /*tp_dealloc*/
     0,          /*tp_print*/

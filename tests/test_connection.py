@@ -34,6 +34,7 @@ import psycopg2.extensions
 from testutils import unittest, decorate_all_tests, skip_if_no_superuser
 from testutils import skip_before_postgres, skip_after_postgres
 from testutils import ConnectingTestCase, skip_if_tpc_disabled
+from testutils import skip_if_windows
 from testconfig import dsn, dbname
 
 
@@ -64,6 +65,7 @@ class ConnectionTests(ConnectingTestCase):
 
     @skip_before_postgres(8, 4)
     @skip_if_no_superuser
+    @skip_if_windows
     def test_cleanup_on_badconn_close(self):
         # ticket #148
         conn = self.conn
@@ -125,9 +127,6 @@ class ConnectionTests(ConnectingTestCase):
             cur.execute(sql)
 
         self.assertEqual(50, len(conn.notices))
-        self.assert_('table50' in conn.notices[0], conn.notices[0])
-        self.assert_('table51' in conn.notices[1], conn.notices[1])
-        self.assert_('table98' in conn.notices[-2], conn.notices[-2])
         self.assert_('table99' in conn.notices[-1], conn.notices[-1])
 
     def test_server_version(self):
@@ -248,6 +247,28 @@ class ConnectionTests(ConnectingTestCase):
         cur = self.conn.cursor()
         cur.execute("select 1 as a")
         self.assertRaises(TypeError, (lambda r: r['a']), cur.fetchone())
+
+    def test_cursor_factory_none(self):
+        # issue #210
+        conn = self.connect()
+        cur = conn.cursor(cursor_factory=None)
+        self.assertEqual(type(cur), psycopg2.extensions.cursor)
+
+        conn = self.connect(cursor_factory=psycopg2.extras.DictCursor)
+        cur = conn.cursor(cursor_factory=None)
+        self.assertEqual(type(cur), psycopg2.extras.DictCursor)
+
+    def test_failed_init_status(self):
+        class SubConnection(psycopg2.extensions.connection):
+            def __init__(self, dsn):
+                try:
+                    super(SubConnection, self).__init__(dsn)
+                except Exception:
+                    pass
+
+        c = SubConnection("dbname=thereisnosuchdatabasemate password=foobar")
+        self.assert_(c.closed, "connection failed so it must be closed")
+        self.assert_('foobar' not in c.dsn, "password was not obscured")
 
 
 class IsolationLevelsTestCase(ConnectingTestCase):

@@ -21,17 +21,26 @@ and stable as a rock.
 psycopg2 is different from the other database adapter because it was
 designed for heavily multi-threaded applications that create and destroy
 lots of cursors and make a conspicuous number of concurrent INSERTs or
-UPDATEs. psycopg2 also provide full asycronous operations and support
+UPDATEs. psycopg2 also provide full asynchronous operations and support
 for coroutine libraries.
 """
 
+# note: if you are changing the list of supported Python version please fix
+# the docs in install.rst and the /features/ page on the website.
 classifiers = """\
 Development Status :: 5 - Production/Stable
 Intended Audience :: Developers
 License :: OSI Approved :: GNU Library or Lesser General Public License (LGPL)
 License :: OSI Approved :: Zope Public License
 Programming Language :: Python
+Programming Language :: Python :: 2.5
+Programming Language :: Python :: 2.6
+Programming Language :: Python :: 2.7
 Programming Language :: Python :: 3
+Programming Language :: Python :: 3.1
+Programming Language :: Python :: 3.2
+Programming Language :: Python :: 3.3
+Programming Language :: Python :: 3.4
 Programming Language :: C
 Programming Language :: SQL
 Topic :: Database
@@ -77,7 +86,7 @@ except ImportError:
 # Take a look at http://www.python.org/dev/peps/pep-0386/
 # for a consistent versioning pattern.
 
-PSYCOPG_VERSION = '2.5'
+PSYCOPG_VERSION = '2.6.dev0'
 
 version_flags   = ['dt', 'dec', 'xpr', 'dfc']
 
@@ -210,7 +219,7 @@ or with the pg_config option in 'setup.cfg'.
 class psycopg_build_ext(build_ext):
     """Conditionally complement the setup.cfg options file.
 
-    This class configures the include_dirs, libray_dirs, libraries
+    This class configures the include_dirs, library_dirs, libraries
     options as required by the system. Most of the configuration happens
     in finalize_options() method.
 
@@ -287,12 +296,15 @@ class psycopg_build_ext(build_ext):
             manifest = '_psycopg.vc9.x86.manifest'
             if platform == 'win-amd64':
                 manifest = '_psycopg.vc9.amd64.manifest'
+            try:
+                ext_path = self.get_ext_fullpath(extension.name)
+            except AttributeError:
+                ext_path = os.path.join(self.build_lib,
+                        'psycopg2', '_psycopg.pyd')
             self.compiler.spawn(
                 ['mt.exe', '-nologo', '-manifest',
                  os.path.join('psycopg', manifest),
-                 '-outputresource:%s;2' % (
-                        os.path.join(self.build_lib,
-                                     'psycopg2', '_psycopg.pyd'))])
+                 '-outputresource:%s;2' % ext_path])
 
     def finalize_win32(self):
         """Finalize build system configuration on win32 platform."""
@@ -363,7 +375,7 @@ class psycopg_build_ext(build_ext):
     finalize_linux3 = finalize_linux
 
     def finalize_options(self):
-        """Complete the build system configuation."""
+        """Complete the build system configuration."""
         build_ext.finalize_options(self)
 
         pg_config_helper = PostgresConfig(self)
@@ -501,9 +513,8 @@ you probably need to install its companion -dev or -devel package."""
 
 # generate a nice version string to avoid confusion when users report bugs
 version_flags.append('pq3') # no more a choice
-for have in parser.get('build_ext', 'define').split(','):
-    if have == 'PSYCOPG_EXTENSIONS':
-        version_flags.append('ext')
+version_flags.append('ext') # no more a choice
+
 if version_flags:
     PSYCOPG_VERSION_EX = PSYCOPG_VERSION + " (%s)" % ' '.join(version_flags)
 else:
@@ -524,6 +535,14 @@ if parser.has_option('build_ext', 'static_libpq'):
 else:
     static_libpq = 0
 
+# And now... explicitly add the defines from the .cfg files.
+# Looks like setuptools or some other cog doesn't add them to the command line
+# when called e.g. with "pip -e git+url'. This results in declarations
+# duplicate on the commandline, which I hope is not a problem.
+for define in parser.get('build_ext', 'define').split(','):
+    if define:
+        define_macros.append((define, '1'))
+
 # build the extension
 
 sources = [ os.path.join('psycopg', x) for x in sources]
@@ -543,6 +562,14 @@ download_url = (
     "http://initd.org/psycopg/tarballs/PSYCOPG-%s/psycopg2-%s.tar.gz"
     % ('-'.join(PSYCOPG_VERSION.split('.')[:2]), PSYCOPG_VERSION))
 
+try:
+    f = open("README.rst")
+    readme = f.read()
+    f.close()
+except:
+    print("failed to read readme: ignoring...")
+    readme = __doc__
+
 setup(name="psycopg2",
       version=PSYCOPG_VERSION,
       maintainer="Federico Di Gregorio",
@@ -551,10 +578,10 @@ setup(name="psycopg2",
       author_email="fog@initd.org",
       url="http://initd.org/psycopg/",
       download_url=download_url,
-      license="GPL with exceptions or ZPL",
+      license="LGPL with exceptions or ZPL",
       platforms=["any"],
-      description=__doc__.split("\n")[0],
-      long_description="\n".join(__doc__.split("\n")[2:]),
+      description=readme.split("\n")[0],
+      long_description="\n".join(readme.split("\n")[2:]).lstrip(),
       classifiers=[x for x in classifiers.split("\n") if x],
       data_files=data_files,
       package_dir={'psycopg2': 'lib', 'psycopg2.tests': 'tests'},

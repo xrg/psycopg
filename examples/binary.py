@@ -24,7 +24,7 @@ import psycopg2
 if len(sys.argv) > 1:
     DSN = sys.argv[1]
 
-print "Opening connection using dns:", DSN
+print "Opening connection using dsn:", DSN
 conn = psycopg2.connect(DSN)
 print "Encoding for this connection is", conn.encoding
 
@@ -79,7 +79,7 @@ for row in curs.fetchall():
     print "done"
     print "  python type of image data is", type(row[0])
     
-# this rollback is required because we can't drop a table with a binary cusor
+# this rollback is required because we can't drop a table with a binary cursor
 # declared and still open
 conn.rollback()
 
