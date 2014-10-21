@@ -21,6 +21,10 @@ parser.add_option("-b", None,
                   action="store_true", dest="bin_proto", default=False,
                   help="Uses the binary cursor")
 
+parser.add_option("-B", None,
+                  action="store_true", dest="bin_tuples", default=False,
+                  help="Uses binary tuples on binary cursor")
+
 parser.add_option("-n", "--num-reps", dest="num_reps", 
                   help="Number of repetitions for stress test",)
 
@@ -75,7 +79,9 @@ conn = psycopg2.connect(dsn)
 print 'Connection established'
 if options.bin_proto:
     cr = psycopg2.extensions.cursor_bin(conn)
-    print "Using a binary cursor"
+    if options.bin_tuples:
+        cr.bintuples = True
+    print "Using a binary cursor. Bintuples:", cr.bintuples
 else:
     cr = conn.cursor()
 
@@ -161,12 +167,15 @@ if options.regulars:
 
 if options.stress:
     ran = []
-    for r in range(1, 500):
+    nres = 0
+    for r in range(1, 10):
         ran.extend([r, 0.4* r, u'αβγ' + str(r)])
         # ran.extend([r * 0.1, r* 0.15, r* 0.3])
     print "trying with: ", ran[:5]
-    qry = 'SELECT (' + ', '.join([ '%s' for x in ran]) + ');'
-    for i in range(1, 1000):
+    qry = 'SELECT ' + ', '.join([ '%s' for x in ran]) + ' FROM generate_series(1,1000);'
+    for i in range(0, int(options.num_reps)):
         cr.execute(qry, ran)
         res = cr.fetchall()
+        nres += len(res)
+    print "got %d x" % nres, res[0][:5], '...'
 
