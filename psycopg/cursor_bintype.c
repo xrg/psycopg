@@ -565,8 +565,8 @@ _psyco_bincurs_execute(cursorObject *self,
 
     /* At this point, the SQL statement must be str, not unicode */
 
-    if (pargs.nParams && mres >= 0)
-        res = pq_execute_params(self, &pargs, async, 0);
+    if ((pargs.nParams || self->bintuples) && mres >= 0)
+        res = pq_execute_params(self, &pargs, async, 0, self->bintuples);
     else
         res = pq_execute(self, PyString_AS_STRING(self->query), async, 0, 0);
     Dprintf("psyco_bincurs_execute: res = %d, pgres = %p", res, self->pgres);
@@ -629,12 +629,71 @@ psyco_bincurs_execute(cursorObject *self, PyObject *args, PyObject *kwargs)
     return Py_None;
 }
 
+#define psyco_curs_bin_cast_doc \
+"cast_bin(oid, b) -> value\n\n" \
+"Convert the buffer b to a Python object according to its oid.\n\n" \
+"Look for a binary typecaster first in the cursor, then in its connection," \
+"then in the global register. If no suitable typecaster is found," \
+"raise a TypeError."
+
+static PyObject *
+psyco_curs_bin_cast(cursorObject *self, PyObject *args)
+{
+    PyObject *oid;
+    PyObject *s;
+    PyObject *cast;
+
+    if (!PyArg_ParseTuple(args, "OO", &oid, &s))
+        return NULL;
+
+    cast = curs_get_bin_cast(self, oid);
+    return PyObject_CallFunctionObjArgs(cast, s, (PyObject *)self, NULL);
+}
+
+#define psyco_curs_bintuples_doc \
+"Set or return cursor use of binary data, from DB to client"
+
+static PyObject *
+psyco_curs_bintuples_get(cursorObject *self)
+{
+    PyObject *ret;
+    ret = self->bintuples ? Py_True : Py_False;
+    Py_INCREF(ret);
+    return ret;
+}
+
+int
+psyco_curs_bintuples_set(cursorObject *self, PyObject *pyvalue)
+{
+    int value;
+
+    if ((value = PyObject_IsTrue(pyvalue)) == -1)
+        return -1;
+
+    self->bintuples = value;
+
+    return 0;
+}
+
+
 static struct PyMethodDef cursorBinObject_methods[] = {
     /* DBAPI-2.0 core */
     {"execute", (PyCFunction)psyco_bincurs_execute,
      METH_VARARGS|METH_KEYWORDS, psyco_bincurs_execute_doc},
-     {NULL}
+    {"cast_bin", (PyCFunction)psyco_curs_bin_cast,
+     METH_VARARGS, psyco_curs_bin_cast_doc},
+    {NULL}
 };
+
+/* object calculated member list */
+static struct PyGetSetDef cursorBinObject_getsets[] = {
+    { "bintuples",
+      (getter)psyco_curs_bintuples_get,
+      (setter)psyco_curs_bintuples_set,
+      psyco_curs_bintuples_doc, NULL },
+    {NULL}
+};
+
 
 /* object type */
 
@@ -680,7 +739,7 @@ PyTypeObject cursorBinType = {
 
     cursorBinObject_methods, /*tp_methods*/
     0,          /*tp_members*/
-    0,          /*tp_getset*/
+    cursorBinObject_getsets, /*tp_getset*/
     &cursorType, /*tp_base*/
     0,          /*tp_dict*/
 

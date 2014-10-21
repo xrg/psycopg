@@ -178,6 +178,8 @@ typecast_parse_time(const char* s, const char** t, Py_ssize_t* len,
 
 #include "psycopg/typecast_array.c"
 
+#include "psycopg/typecast_bintypes.c"
+
 static long int typecast_default_DEFAULT[] = {0};
 static typecastObject_initlist typecast_default = {
     "DEFAULT", typecast_default_DEFAULT, typecast_STRING_cast};
@@ -279,6 +281,18 @@ typecast_init(PyObject *dict)
         if (typecast_builtins[i].values == typecast_BINARY_types) {
             psyco_default_binary_cast = (PyObject *)t;
         }
+        Py_DECREF((PyObject *)t);
+        t = NULL;
+    }
+
+    for (i = 0; bincast_builtins[i].name != NULL; i++) {
+        Dprintf("typecast_init: initializing binary cast to %s", bincast_builtins[i].name);
+
+        t = (typecastObject *)typecast_from_c(&(bincast_builtins[i]), dict);
+        if (t == NULL) { goto exit; }
+        if (typecast_add((PyObject *)t, NULL, 1) < 0) { goto exit; }
+
+        //PyDict_SetItem(dict, t->name, (PyObject *)t);
         Py_DECREF((PyObject *)t);
         t = NULL;
     }

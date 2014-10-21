@@ -44,6 +44,7 @@ struct cursorObject {
     int closed:1;            /* 1 if the cursor is closed */
     int notuples:1;          /* 1 if the command was not a SELECT query */
     int withhold:1;          /* 1 if the cursor is named and uses WITH HOLD */
+    int bintuples:1;         /* 1 if cursor is supposed to fetch data in binary tuples */
 
     int scrollable;          /* 1 if the cursor is named and SCROLLABLE,
                                 0 if not scrollable
@@ -94,6 +95,7 @@ HIDDEN int _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject *
 
 /* C-callable functions in cursor_int.c and cursor_type.c */
 BORROWED HIDDEN PyObject *curs_get_cast(cursorObject *self, PyObject *oid);
+BORROWED HIDDEN PyObject *curs_get_bin_cast(cursorObject *self, PyObject *oid);
 HIDDEN void curs_reset(cursorObject *self);
 HIDDEN int psyco_curs_withhold_set(cursorObject *self, PyObject *pyvalue);
 HIDDEN int psyco_curs_scrollable_set(cursorObject *self, PyObject *pyvalue);

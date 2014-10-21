@@ -1887,6 +1887,7 @@ cursor_setup(cursorObject *self, connectionObject *conn, const char *name)
 
     self->mark = conn->mark;
     self->notuples = 1;
+    self->bintuples = 0;
     self->arraysize = 1;
     self->itersize = 2000;
     self->rowcount = -1;

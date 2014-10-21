@@ -64,6 +64,45 @@ curs_get_cast(cursorObject *self, PyObject *oid)
     return psyco_default_cast;
 }
 
+BORROWED PyObject *
+curs_get_bin_cast(cursorObject *self, PyObject *oid)
+{
+    PyObject *cast;
+
+    /* cursor lookup */
+    if (self->binary_types != NULL && self->binary_types != Py_None) {
+        cast = PyDict_GetItem(self->binary_types, oid);
+        Dprintf("curs_get_bin_cast:        per-cursor dict: %p", cast);
+        if (cast) { return cast; }
+    }
+
+    /* connection lookup */
+    cast = PyDict_GetItem(self->conn->binary_types, oid);
+    Dprintf("curs_get_bin_cast:        per-connection dict: %p", cast);
+    if (cast) { return cast; }
+
+    /* global lookup */
+    cast = PyDict_GetItem(psyco_binary_types, oid);
+    Dprintf("curs_get_bin_cast:        global dict: %p", cast);
+    if (cast) { return cast; }
+
+    /* No fallback, raise exception if OID has no registered cast */
+    if (PyInt_Check(oid)){
+        PyErr_Format(PyExc_TypeError, "no binary typecast from OID=%d", PyInt_AsLong(oid));
+    } else {
+        PyObject *repr= PyObject_Repr(oid);
+        if (repr == NULL) {
+            PyErr_Clear();
+            PyErr_SetString(PyExc_TypeError, "no binary typecast from OID=?");
+        }
+        else {
+            PyErr_Format(PyExc_TypeError, "no binary typecast from OID=%s", PyString_AsString(repr));
+            Py_DECREF(repr);
+        }
+    }
+    return NULL;
+}
+
 #include <string.h>
 
 

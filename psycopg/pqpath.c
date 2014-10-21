@@ -1060,7 +1060,7 @@ pq_get_last_result(connectionObject *conn)
    this fucntion locks the connection object
    this function call Py_*_ALLOW_THREADS macros */
 int
-pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int async, int no_result)
+pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int async, int no_result, int bin_result)
 {
     PGresult *pgres = NULL;
     char *error = NULL;
@@ -1093,12 +1093,13 @@ pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int asyn
 
     if (async == 0) {
         CLEARPGRES(curs->pgres);
-        Dprintf("pq_execute: executing SYNC query:");
+        Dprintf("pq_execute_params: executing SYNC query: %d", bin_result);
         Dprintf("    %-.200s", pargs->command);
         curs->pgres = PQexecParams(curs->conn->pgconn, pargs->command,
                 pargs->nParams, pargs->paramTypes,
                 (const char* const* )pargs->paramValues,
-                pargs->paramLengths, pargs->paramFormats, 0 /*todo: binary*/);
+                pargs->paramLengths, pargs->paramFormats,
+                (bin_result)?1:0 );
         /* dont let pgres = NULL go to pq_fetch() */
         if (curs->pgres == NULL) {
             pthread_mutex_unlock(&(curs->conn->lock));
@@ -1119,7 +1120,7 @@ pq_execute_params(cursorObject *curs, const struct pq_exec_args *pargs, int asyn
                 pargs->nParams, pargs->paramTypes, 
                 (const char* const* )pargs->paramValues,
                 pargs->paramLengths, 
-                pargs->paramFormats, 0 /*todo: binary*/) == 0) {
+                pargs->paramFormats,(bin_result)?1:0) == 0) {
             pthread_mutex_unlock(&(curs->conn->lock));
             Py_BLOCK_THREADS;
             PyErr_SetString(OperationalError,
@@ -1246,21 +1247,15 @@ _pq_fetch_tuples(cursorObject *curs)
             goto err_for;
         }
         Dprintf("_pq_fetch_tuples: looking for cast %d:", ftype);
-        cast = curs_get_cast(curs, type);
-
-        /* else if we got binary tuples and if we got a field that
-           is binary use the default cast
-           FIXME: what the hell am I trying to do here? This just can't work..
-        */
-        if (pgbintuples && cast == psyco_default_binary_cast) {
-            Dprintf("_pq_fetch_tuples: Binary cursor and "
-                    "binary field: %i using default cast",
-                    PQftype(curs->pgres,i));
-            cast = psyco_default_cast;
-        }
+        if (pgbintuples)
+            cast = curs_get_bin_cast(curs, type);
+        else
+            cast = curs_get_cast(curs, type);
 
         Dprintf("_pq_fetch_tuples: using cast at %p for type %d",
                 cast, PQftype(curs->pgres,i));
+        if (!cast)
+            goto err_for;
         Py_INCREF(cast);
         PyTuple_SET_ITEM(casts, i, cast);
 
