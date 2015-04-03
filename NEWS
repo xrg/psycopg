@@ -4,6 +4,13 @@ Current release
 What's new in psycopg 2.6
 -------------------------
 
+New features:
+
+- Added support for large objects larger than 2GB. Many thanks to Blake Rouse
+  and the MAAS Team for the feature development.
+- Python `time` objects with a tzinfo specified and PostgreSQL :sql:`timetz`
+  data are converted into each other (:ticket:`#272`).
+
 Bug fixes:
 
 - Json apapter's `!str()` returns the adapted content instead of the `!repr()`
@@ -15,6 +22,9 @@ What's new in psycopg 2.5.5
 
 - Named cursors used as context manager don't swallow the exception on exit
   (:ticket:`#262`).
+- `cursor.description` can be pickled (:ticket:`#265`).
+- Propagate read error messages in COPY FROM (:ticket:`#270`).
+- PostgreSQL time 24:00 is converted to Python 00:00 (:ticket:`#278`).
 
 
 What's new in psycopg 2.5.4

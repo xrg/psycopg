@@ -245,7 +245,8 @@ types:
     +--------------------+-------------------------+--------------------------+
     | `!date`            | :sql:`date`             | :ref:`adapt-date`        |
     +--------------------+-------------------------+                          |
-    | `!time`            | :sql:`time`             |                          |
+    | `!time`            | | :sql:`time`           |                          |
+    |                    | | :sql:`timetz`         |                          |
     +--------------------+-------------------------+                          |
     | `!datetime`        | | :sql:`timestamp`      |                          |
     |                    | | :sql:`timestamptz`    |                          |
@@ -482,7 +483,7 @@ Date/Time objects adaptation
 
 Python builtin `~datetime.datetime`, `~datetime.date`,
 `~datetime.time`,  `~datetime.timedelta` are converted into PostgreSQL's
-:sql:`timestamp[tz]`, :sql:`date`, :sql:`time`, :sql:`interval` data types.
+:sql:`timestamp[tz]`, :sql:`date`, :sql:`time[tz]`, :sql:`interval` data types.
 Time zones are supported too.  The Egenix `mx.DateTime`_ objects are adapted
 the same way::
 
@@ -898,6 +899,20 @@ using the |lo_import|_ and |lo_export|_ libpq functions.
 .. _lo_import: http://www.postgresql.org/docs/current/static/lo-interfaces.html#LO-IMPORT
 .. |lo_export| replace:: `!lo_export()`
 .. _lo_export: http://www.postgresql.org/docs/current/static/lo-interfaces.html#LO-EXPORT
+
+.. versionchanged:: 2.6
+    added support for large objects greated than 2GB. Note that the support is
+    enabled only if all the following conditions are verified:
+
+    - the Python build is 64 bits;
+    - the extension was built against at least libpq 9.3;
+    - the server version is at least PostgreSQL 9.3
+      (`~connection.server_version` must be >= ``90300``).
+
+    If Psycopg was built with 64 bits large objects support (i.e. the first
+    two contidions above are verified), the `psycopg2.__version__` constant
+    will contain the ``lo64`` flag.  If any of the contition is not met
+    several `!lobject` methods will fail if the arguments exceed 2GB.
 
 
 
