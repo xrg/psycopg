@@ -28,6 +28,9 @@
 
 #include "psycopg/connection.h"
 #include "psycopg/cursor.h"
+#include "psycopg/replication_connection.h"
+#include "psycopg/replication_cursor.h"
+#include "psycopg/replication_message.h"
 #include "psycopg/green.h"
 #include "psycopg/lobject.h"
 #include "psycopg/notify.h"
@@ -60,7 +63,6 @@
 HIDDEN PyObject *pyDateTimeModuleP = NULL;
 
 HIDDEN PyObject *psycoEncodings = NULL;
-
 #ifdef PSYCOPG_DEBUG
 HIDDEN int psycopg_debug_enabled = 0;
 #endif
@@ -111,6 +113,91 @@ psyco_connect(PyObject *self, PyObject *args, PyObject *keywds)
     }
 
     return conn;
+}
+
+
+#define psyco_parse_dsn_doc \
+"parse_dsn(dsn) -> dict -- parse a connection string into parameters"
+
+static PyObject *
+psyco_parse_dsn(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    char *err = NULL;
+    PQconninfoOption *options = NULL;
+    PyObject *res = NULL, *dsn;
+
+    static char *kwlist[] = {"dsn", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "O", kwlist, &dsn)) {
+        return NULL;
+    }
+
+    Py_INCREF(dsn); /* for ensure_bytes */
+    if (!(dsn = psycopg_ensure_bytes(dsn))) { goto exit; }
+
+    options = PQconninfoParse(Bytes_AS_STRING(dsn), &err);
+    if (options == NULL) {
+        if (err != NULL) {
+            PyErr_Format(ProgrammingError, "invalid dsn: %s", err);
+            PQfreemem(err);
+        } else {
+            PyErr_SetString(OperationalError, "PQconninfoParse() failed");
+        }
+        goto exit;
+    }
+
+    res = psycopg_dict_from_conninfo_options(options, /* include_password = */ 1);
+
+exit:
+    PQconninfoFree(options);    /* safe on null */
+    Py_XDECREF(dsn);
+
+    return res;
+}
+
+
+#define psyco_quote_ident_doc \
+"quote_ident(str, conn_or_curs) -> str -- wrapper around PQescapeIdentifier\n\n" \
+":Parameters:\n" \
+"  * `str`: A bytes or unicode object\n" \
+"  * `conn_or_curs`: A connection or cursor, required"
+
+static PyObject *
+psyco_quote_ident(PyObject *self, PyObject *args, PyObject *kwargs)
+{
+    PyObject *ident = NULL, *obj = NULL, *result = NULL;
+    connectionObject *conn;
+    char *quoted = NULL;
+
+    static char *kwlist[] = {"ident", "scope", NULL};
+    if (!PyArg_ParseTupleAndKeywords(args, kwargs, "OO", kwlist, &ident, &obj)) {
+        return NULL;
+    }
+
+    if (PyObject_TypeCheck(obj, &cursorType)) {
+        conn = ((cursorObject*)obj)->conn;
+    }
+    else if (PyObject_TypeCheck(obj, &connectionType)) {
+        conn = (connectionObject*)obj;
+    }
+    else {
+        PyErr_SetString(PyExc_TypeError,
+                        "argument 2 must be a connection or a cursor");
+        return NULL;
+    }
+
+    Py_INCREF(ident); /* for ensure_bytes */
+    if (!(ident = psycopg_ensure_bytes(ident))) { goto exit; }
+
+    if (!(quoted = psycopg_escape_identifier(conn,
+        Bytes_AS_STRING(ident), Bytes_GET_SIZE(ident)))) { goto exit; }
+
+    result = conn_text_from_chars(conn, quoted);
+
+exit:
+    PQfreemem(quoted);
+    Py_XDECREF(ident);
+
+    return result;
 }
 
 /** type registration **/
@@ -176,6 +263,27 @@ psyco_register_type(PyObject *self, PyObject *args)
     Py_RETURN_NONE;
 }
 
+
+
+/* Make sure libcrypto thread callbacks are set up. */
+static void
+psyco_libcrypto_threads_init(void)
+{
+    PyObject *m;
+
+    /* importing the ssl module sets up Python's libcrypto callbacks */
+    if ((m = PyImport_ImportModule("ssl"))) {
+        /* disable libcrypto setup in libpq, so it won't stomp on the callbacks
+           that have already been set up */
+        PQinitOpenSSL(1, 0);
+        Py_DECREF(m);
+    }
+    else {
+        /* might mean that Python has been compiled without OpenSSL support,
+           fall back to relying on libpq's libcrypto locking */
+        PyErr_Clear();
+    }
+}
 
 /* Initialize the default adapters map
  *
@@ -279,6 +387,19 @@ exit:
     Py_XDECREF(call);
 
     return rv;
+}
+
+#define psyco_libpq_version_doc "Query actual libpq version loaded."
+
+static PyObject*
+psyco_libpq_version(PyObject *self)
+{
+#if PG_VERSION_NUM >= 90100
+    return PyInt_FromLong(PQlibVersion());
+#else
+    PyErr_SetString(NotSupportedError, "version discovery is not supported in libpq < 9.1");
+    return NULL;
+#endif
 }
 
 /* psyco_encodings_fill
@@ -676,6 +797,10 @@ error:
 static PyMethodDef psycopgMethods[] = {
     {"_connect",  (PyCFunction)psyco_connect,
      METH_VARARGS|METH_KEYWORDS, psyco_connect_doc},
+    {"parse_dsn",  (PyCFunction)psyco_parse_dsn,
+     METH_VARARGS|METH_KEYWORDS, psyco_parse_dsn_doc},
+    {"quote_ident", (PyCFunction)psyco_quote_ident,
+     METH_VARARGS|METH_KEYWORDS, psyco_quote_ident_doc},
     {"adapt",  (PyCFunction)psyco_microprotocols_adapt,
      METH_VARARGS, psyco_microprotocols_adapt_doc},
 
@@ -685,6 +810,8 @@ static PyMethodDef psycopgMethods[] = {
      METH_VARARGS|METH_KEYWORDS, typecast_from_python_doc},
     {"new_array_type", (PyCFunction)typecast_array_from_python,
      METH_VARARGS|METH_KEYWORDS, typecast_array_from_python_doc},
+    {"libpq_version", (PyCFunction)psyco_libpq_version,
+     METH_NOARGS, psyco_libpq_version_doc},
 
     {"Date",  (PyCFunction)psyco_Date,
      METH_VARARGS, psyco_Date_doc},
@@ -769,6 +896,15 @@ INIT_MODULE(_psycopg)(void)
     Py_TYPE(&cursorBinType)  = &PyType_Type;
     if (PyType_Ready(&cursorBinType) == -1) goto exit;
 
+    Py_TYPE(&replicationConnectionType) = &PyType_Type;
+    if (PyType_Ready(&replicationConnectionType) == -1) goto exit;
+
+    Py_TYPE(&replicationCursorType) = &PyType_Type;
+    if (PyType_Ready(&replicationCursorType) == -1) goto exit;
+
+    Py_TYPE(&replicationMessageType) = &PyType_Type;
+    if (PyType_Ready(&replicationMessageType) == -1) goto exit;
+
     Py_TYPE(&typecastType) = &PyType_Type;
     if (PyType_Ready(&typecastType) == -1) goto exit;
 
@@ -821,6 +957,9 @@ INIT_MODULE(_psycopg)(void)
     Py_TYPE(&lobjectType) = &PyType_Type;
     if (PyType_Ready(&lobjectType) == -1) goto exit;
 
+    /* initialize libcrypto threading callbacks */
+    psyco_libcrypto_threads_init();
+
     /* import mx.DateTime module, if necessary */
 #ifdef HAVE_MXDATETIME
     Py_TYPE(&mxdatetimeType) = &PyType_Type;
@@ -849,6 +988,8 @@ INIT_MODULE(_psycopg)(void)
     /* Initialize the PyDateTimeAPI everywhere is used */
     PyDateTime_IMPORT;
     if (psyco_adapter_datetime_init()) { goto exit; }
+    if (psyco_repl_curs_datetime_init()) { goto exit; }
+    if (psyco_replmsg_datetime_init()) { goto exit; }
 
     Py_TYPE(&pydatetimeType) = &PyType_Type;
     if (PyType_Ready(&pydatetimeType) == -1) goto exit;
@@ -883,6 +1024,9 @@ INIT_MODULE(_psycopg)(void)
     /* set some module's parameters */
     PyModule_AddStringConstant(module, "__version__", PSYCOPG_VERSION);
     PyModule_AddStringConstant(module, "__doc__", "psycopg PostgreSQL driver");
+    PyModule_AddIntConstant(module, "__libpq_version__", PG_VERSION_NUM);
+    PyModule_AddIntMacro(module, REPLICATION_PHYSICAL);
+    PyModule_AddIntMacro(module, REPLICATION_LOGICAL);
     PyModule_AddObject(module, "apilevel", Text_FromUTF8(APILEVEL));
     PyModule_AddObject(module, "threadsafety", PyInt_FromLong(THREADSAFETY));
     PyModule_AddObject(module, "paramstyle", Text_FromUTF8(PARAMSTYLE));
@@ -891,6 +1035,9 @@ INIT_MODULE(_psycopg)(void)
     PyModule_AddObject(module, "connection", (PyObject*)&connectionType);
     PyModule_AddObject(module, "cursor", (PyObject*)&cursorType);
     PyModule_AddObject(module, "cursor_bin", (PyObject*)&cursorBinType);
+    PyModule_AddObject(module, "ReplicationConnection", (PyObject*)&replicationConnectionType);
+    PyModule_AddObject(module, "ReplicationCursor", (PyObject*)&replicationCursorType);
+    PyModule_AddObject(module, "ReplicationMessage", (PyObject*)&replicationMessageType);
     PyModule_AddObject(module, "ISQLQuote", (PyObject*)&isqlquoteType);
     PyModule_AddObject(module, "ISQLParam", (PyObject*)&isqlparamType);
     PyModule_AddObject(module, "Notify", (PyObject*)&notifyType);
@@ -931,6 +1078,9 @@ INIT_MODULE(_psycopg)(void)
     /* create a standard set of exceptions and add them to the module's dict */
     if (0 != psyco_errors_init()) { goto exit; }
     psyco_errors_fill(dict);
+
+    replicationPhysicalConst = PyDict_GetItemString(dict, "REPLICATION_PHYSICAL");
+    replicationLogicalConst  = PyDict_GetItemString(dict, "REPLICATION_LOGICAL");
 
     cursorBinType.tp_alloc = PyType_GenericAlloc;
     isqlparamType.tp_alloc = PyType_GenericAlloc;

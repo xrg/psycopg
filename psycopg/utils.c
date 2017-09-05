@@ -40,6 +40,8 @@
  * and set an exception. The returned string includes quotes and leading E if
  * needed.
  *
+ * `len` is optional: if < 0 it will be calculated.
+ *
  * If tolen is set, it will contain the length of the escaped string,
  * including quotes.
  */
@@ -50,8 +52,13 @@ psycopg_escape_string(connectionObject *conn, const char *from, Py_ssize_t len,
     Py_ssize_t ql;
     int eq = (conn && (conn->equote)) ? 1 : 0;
 
-    if (len == 0)
+    if (len < 0) {
         len = strlen(from);
+    } else if (strchr(from, '\0') != from + len) {
+        PyErr_Format(PyExc_ValueError, "A string literal cannot contain NUL (0x00) characters.");
+
+	return NULL;
+    }
 
     if (to == NULL) {
         to = (char *)PyMem_Malloc((len * 2 + 4) * sizeof(char));
@@ -62,12 +69,10 @@ psycopg_escape_string(connectionObject *conn, const char *from, Py_ssize_t len,
     }
 
     {
-        #if PG_VERSION_HEX >= 0x080104
             int err;
             if (conn && conn->pgconn)
                 ql = PQescapeStringConn(conn->pgconn, to+eq+1, from, len, &err);
             else
-        #endif
                 ql = PQescapeString(to+eq+1, from, len);
     }
 
@@ -87,47 +92,44 @@ psycopg_escape_string(connectionObject *conn, const char *from, Py_ssize_t len,
     return to;
 }
 
-/* Escape a string to build a valid PostgreSQL identifier
+/* Escape a string for inclusion in a query as identifier.
  *
- * Allocate a new buffer on the Python heap containing the new string.
- * 'len' is optional: if 0 the length is calculated.
+ * 'len' is optional: if < 0 it will be calculated.
  *
- * The returned string doesn't include quotes.
- *
- * WARNING: this function is not so safe to allow untrusted input: it does no
- * check for multibyte chars. Such a function should be built on
- * PQescapeIndentifier, which is only available from PostgreSQL 9.0.
+ * Return a string allocated by Postgres: free it using PQfreemem
+ * In case of error set a Python exception.
  */
 char *
-psycopg_escape_identifier_easy(const char *from, Py_ssize_t len)
+psycopg_escape_identifier(connectionObject *conn, const char *str, Py_ssize_t len)
 {
-    char *rv;
-    const char *src;
-    char *dst;
+    char *rv = NULL;
 
-    if (!len) { len = strlen(from); }
-    if (!(rv = PyMem_New(char, 1 + 2 * len))) {
-        PyErr_NoMemory();
-        return NULL;
+    if (!conn || !conn->pgconn) {
+        PyErr_SetString(InterfaceError, "connection not valid");
+        goto exit;
     }
 
-    /* The only thing to do is double quotes */
-    for (src = from, dst = rv; *src; ++src, ++dst) {
-        *dst = *src;
-        if ('"' == *src) {
-            *++dst = '"';
+    if (len < 0) { len = strlen(str); }
+
+    rv = PQescapeIdentifier(conn->pgconn, str, len);
+    if (!rv) {
+        char *msg;
+        msg = PQerrorMessage(conn->pgconn);
+        if (!msg || !msg[0]) {
+            msg = "no message provided";
         }
+        PyErr_Format(InterfaceError, "failed to escape identifier: %s", msg);
     }
 
-    *dst = '\0';
-
+exit:
     return rv;
 }
+
 
 /* Duplicate a string.
  *
  * Allocate a new buffer on the Python heap containing the new string.
- * 'len' is optional: if 0 the length is calculated.
+ * 'len' is optional: if < 0 the length is calculated.
  *
  * Store the return in 'to' and return 0 in case of success, else return -1
  * and raise an exception.
@@ -141,7 +143,7 @@ psycopg_strdup(char **to, const char *from, Py_ssize_t len)
         *to = NULL;
         return 0;
     }
-    if (!len) { len = strlen(from); }
+    if (len < 0) { len = strlen(from); }
     if (!(*to = PyMem_Malloc(len + 1))) {
         PyErr_NoMemory();
         return -1;
@@ -247,3 +249,86 @@ psycopg_is_text_file(PyObject *f)
     }
 }
 
+/* Make a dict out of PQconninfoOption array */
+PyObject *
+psycopg_dict_from_conninfo_options(PQconninfoOption *options, int include_password)
+{
+    PyObject *dict, *res = NULL;
+    PQconninfoOption *o;
+
+    if (!(dict = PyDict_New())) { goto exit; }
+    for (o = options; o->keyword != NULL; o++) {
+        if (o->val != NULL &&
+            (include_password || strcmp(o->keyword, "password") != 0)) {
+            PyObject *value;
+            if (!(value = Text_FromUTF8(o->val))) { goto exit; }
+            if (PyDict_SetItemString(dict, o->keyword, value) != 0) {
+                Py_DECREF(value);
+                goto exit;
+            }
+            Py_DECREF(value);
+        }
+    }
+
+    res = dict;
+    dict = NULL;
+
+exit:
+    Py_XDECREF(dict);
+
+    return res;
+}
+
+
+/* Convert a C string into Python Text using a specified codec.
+ *
+ * The codec is the python function codec.getdecoder(enc). It is only used on
+ * Python 3 to return unicode: in Py2 the function returns a string.
+ *
+ * len is optional: use -1 to have it calculated by the function.
+ */
+PyObject *
+psycopg_text_from_chars_safe(const char *str, Py_ssize_t len, PyObject *decoder)
+{
+#if PY_MAJOR_VERSION < 3
+
+    if (!str) { Py_RETURN_NONE; }
+
+    if (len < 0) { len = strlen(str); }
+
+    return PyString_FromStringAndSize(str, len);
+
+#else
+
+    static PyObject *replace = NULL;
+    PyObject *rv = NULL;
+    PyObject *b = NULL;
+    PyObject *t = NULL;
+
+    if (!str) { Py_RETURN_NONE; }
+
+    if (len < 0) { len = strlen(str); }
+
+    if (decoder) {
+        if (!replace) {
+            if (!(replace = PyUnicode_FromString("replace"))) { goto exit; }
+        }
+        if (!(b = PyBytes_FromStringAndSize(str, len))) { goto exit; }
+        if (!(t = PyObject_CallFunctionObjArgs(decoder, b, replace, NULL))) {
+            goto exit;
+        }
+
+        if (!(rv = PyTuple_GetItem(t, 0))) { goto exit; }
+        Py_INCREF(rv);
+    }
+    else {
+        rv = PyUnicode_DecodeASCII(str, len, "replace");
+    }
+
+exit:
+    Py_XDECREF(t);
+    Py_XDECREF(b);
+    return rv;
+
+#endif
+}

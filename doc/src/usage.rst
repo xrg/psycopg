@@ -264,7 +264,10 @@ types:
     +--------------------+-------------------------+--------------------------+
     | Anything\ |tm|     | :sql:`json`             | :ref:`adapt-json`        |
     +--------------------+-------------------------+--------------------------+
-    | `uuid`             | :sql:`uuid`             | :ref:`adapt-uuid`        |
+    | `~uuid.UUID`       | :sql:`uuid`             | :ref:`adapt-uuid`        |
+    +--------------------+-------------------------+--------------------------+
+    | `ipaddress`        | | :sql:`inet`           | :ref:`adapt-network`     |
+    | objects            | | :sql:`cidr`           |                          |
     +--------------------+-------------------------+--------------------------+
 
 .. |tm| unicode:: U+2122
@@ -352,7 +355,7 @@ Unicode handling
 Psycopg can exchange Unicode data with a PostgreSQL database.  Python
 `!unicode` objects are automatically *encoded* in the client encoding
 defined on the database connection (the `PostgreSQL encoding`__, available in
-`connection.encoding`, is translated into a `Python codec`__ using the
+`connection.encoding`, is translated into a `Python encoding`__ using the
 `~psycopg2.extensions.encodings` mapping)::
 
     >>> print u, type(u)
@@ -679,7 +682,7 @@ older versions).
 
     By default even a simple :sql:`SELECT` will start a transaction: in
     long-running programs, if no further action is taken, the session will
-    remain "idle in transaction", a condition non desiderable for several
+    remain "idle in transaction", an undesirable condition for several
     reasons (locks are held by the session, tables bloat...). For long lived
     scripts, either make sure to terminate a transaction as soon as possible or
     use an autocommit connection.
@@ -705,12 +708,27 @@ managers* and can be used with the ``with`` statement::
 
 When a connection exits the ``with`` block, if no exception has been raised by
 the block, the transaction is committed. In case of exception the transaction
-is rolled back. In no case the connection is closed: a connection can be used
-in more than a ``with`` statement and each ``with`` block is effectively
-wrapped in a transaction.
+is rolled back.
 
 When a cursor exits the ``with`` block it is closed, releasing any resource
 eventually associated with it. The state of the transaction is not affected.
+
+Note that, unlike file objects or other resources, exiting the connection's
+``with`` block *doesn't close the connection* but only the transaction
+associated with it: a connection can be used in more than a ``with`` statement
+and each ``with`` block is effectively wrapped in a separate transaction::
+
+    conn = psycopg2.connect(DSN)
+
+    with conn:
+        with conn.cursor() as curs:
+            curs.execute(SQL1)
+
+    with conn:
+        with conn.cursor() as curs:
+            curs.execute(SQL2)
+
+    conn.close()
 
 
 
@@ -849,11 +867,19 @@ Using COPY TO and COPY FROM
 
 Psycopg `cursor` objects provide an interface to the efficient
 PostgreSQL |COPY|__ command to move data from files to tables and back.
+
+Currently no adaptation is provided between Python and PostgreSQL types on
+|COPY|: the file can be any Python file-like object but its format must be in
+the format accepted by `PostgreSQL COPY command`__ (data fromat, escaped
+characters, etc).
+
+.. __: COPY_
+
 The methods exposed are:
 
 `~cursor.copy_from()`
     Reads data *from* a file-like object appending them to a database table
-    (:sql:`COPY table FROM file` syntax). The source file must have both
+    (:sql:`COPY table FROM file` syntax). The source file must provide both
     `!read()` and `!readline()` method.
 
 `~cursor.copy_to()`

@@ -733,6 +733,37 @@ psyco_conn_get_parameter_status(connectionObject *self, PyObject *args)
     return conn_text_from_chars(self, val);
 }
 
+/* get_dsn_parameters method - Get connection parameters */
+
+#define psyco_conn_get_dsn_parameters_doc \
+"get_dsn_parameters() -- Get effective connection parameters.\n\n"
+
+static PyObject *
+psyco_conn_get_dsn_parameters(connectionObject *self)
+{
+#if PG_VERSION_NUM >= 90300
+    PyObject *res = NULL;
+    PQconninfoOption *options = NULL;
+
+    EXC_IF_CONN_CLOSED(self);
+
+    if (!(options = PQconninfo(self->pgconn))) {
+        PyErr_NoMemory();
+        goto exit;
+    }
+
+    res = psycopg_dict_from_conninfo_options(options, /* include_password = */ 0);
+
+exit:
+    PQconninfoFree(options);
+
+    return res;
+#else
+    PyErr_SetString(NotSupportedError, "PQconninfo not available in libpq < 9.3");
+    return NULL;
+#endif
+}
+
 
 /* lobject method - allocate a new lobject */
 
@@ -839,6 +870,10 @@ psyco_conn_get_exception(PyObject *self, void *closure)
     Py_INCREF(exception);
     return exception;
 }
+
+
+#define psyco_conn_poll_doc \
+"poll() -> int -- Advance the connection or query process without blocking."
 
 static PyObject *
 psyco_conn_poll(connectionObject *self)
@@ -973,6 +1008,8 @@ static struct PyMethodDef connectionObject_methods[] = {
      METH_NOARGS, psyco_conn_get_transaction_status_doc},
     {"get_parameter_status", (PyCFunction)psyco_conn_get_parameter_status,
      METH_VARARGS, psyco_conn_get_parameter_status_doc},
+    {"get_dsn_parameters", (PyCFunction)psyco_conn_get_dsn_parameters,
+     METH_NOARGS, psyco_conn_get_dsn_parameters_doc},
     {"get_backend_pid", (PyCFunction)psyco_conn_get_backend_pid,
      METH_NOARGS, psyco_conn_get_backend_pid_doc},
     {"lobject", (PyCFunction)psyco_conn_lobject,
@@ -980,7 +1017,7 @@ static struct PyMethodDef connectionObject_methods[] = {
     {"reset", (PyCFunction)psyco_conn_reset,
      METH_NOARGS, psyco_conn_reset_doc},
     {"poll", (PyCFunction)psyco_conn_poll,
-     METH_NOARGS, psyco_conn_lobject_doc},
+     METH_NOARGS, psyco_conn_poll_doc},
     {"fileno", (PyCFunction)psyco_conn_fileno,
      METH_NOARGS, psyco_conn_fileno_doc},
     {"isexecuting", (PyCFunction)psyco_conn_isexecuting,
@@ -997,8 +1034,8 @@ static struct PyMemberDef connectionObject_members[] = {
         "True if the connection is closed."},
     {"encoding", T_STRING, offsetof(connectionObject, encoding), READONLY,
         "The current client encoding."},
-    {"notices", T_OBJECT, offsetof(connectionObject, notice_list), READONLY},
-    {"notifies", T_OBJECT, offsetof(connectionObject, notifies), READONLY},
+    {"notices", T_OBJECT, offsetof(connectionObject, notice_list), 0},
+    {"notifies", T_OBJECT, offsetof(connectionObject, notifies), 0},
     {"dsn", T_STRING, offsetof(connectionObject, dsn), READONLY,
         "The current connection string."},
     {"async", T_LONG, offsetof(connectionObject, async), READONLY,
@@ -1060,7 +1097,7 @@ connection_setup(connectionObject *self, const char *dsn, long int async)
             self, async, Py_REFCNT(self)
       );
 
-    if (0 > psycopg_strdup(&self->dsn, dsn, 0)) { goto exit; }
+    if (0 > psycopg_strdup(&self->dsn, dsn, -1)) { goto exit; }
     if (!(self->notice_list = PyList_New(0))) { goto exit; }
     if (!(self->notifies = PyList_New(0))) { goto exit; }
     self->async = async;
@@ -1101,10 +1138,12 @@ connection_clear(connectionObject *self)
     Py_CLEAR(self->tpc_xid);
     Py_CLEAR(self->async_cursor);
     Py_CLEAR(self->notice_list);
-    Py_CLEAR(self->notice_filter);
     Py_CLEAR(self->notifies);
     Py_CLEAR(self->string_types);
     Py_CLEAR(self->binary_types);
+    Py_CLEAR(self->cursor_factory);
+    Py_CLEAR(self->pyencoder);
+    Py_CLEAR(self->pydecoder);
     return 0;
 }
 
@@ -1128,7 +1167,6 @@ connection_dealloc(PyObject* obj)
 
     PyMem_Free(self->dsn);
     PyMem_Free(self->encoding);
-    PyMem_Free(self->codec);
     if (self->critical) free(self->critical);
     if (self->cancel) PQfreeCancel(self->cancel);
 
@@ -1168,7 +1206,7 @@ connection_repr(connectionObject *self)
 {
     return PyString_FromFormat(
         "<connection object at %p; dsn: '%s', closed: %ld>",
-        self, self->dsn, self->closed);
+        self, (self->dsn ? self->dsn : "<unintialized>"), self->closed);
 }
 
 static int
@@ -1177,10 +1215,12 @@ connection_traverse(connectionObject *self, visitproc visit, void *arg)
     Py_VISIT((PyObject *)(self->tpc_xid));
     Py_VISIT(self->async_cursor);
     Py_VISIT(self->notice_list);
-    Py_VISIT(self->notice_filter);
     Py_VISIT(self->notifies);
     Py_VISIT(self->string_types);
     Py_VISIT(self->binary_types);
+    Py_VISIT(self->cursor_factory);
+    Py_VISIT(self->pyencoder);
+    Py_VISIT(self->pydecoder);
     return 0;
 }
 

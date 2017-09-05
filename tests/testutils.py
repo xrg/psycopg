@@ -27,8 +27,9 @@
 import os
 import platform
 import sys
+import select
 from functools import wraps
-from testconfig import dsn
+from testconfig import dsn, repl_dsn
 
 try:
     import unittest2
@@ -65,10 +66,11 @@ else:
 
     unittest.TestCase.skipTest = skipTest
 
-# Silence warnings caused by the stubborness of the Python unittest maintainers
+# Silence warnings caused by the stubbornness of the Python unittest
+# maintainers
 # http://bugs.python.org/issue9424
-if not hasattr(unittest.TestCase, 'assert_') \
-or unittest.TestCase.assert_ is not unittest.TestCase.assertTrue:
+if (not hasattr(unittest.TestCase, 'assert_')
+        or unittest.TestCase.assert_ is not unittest.TestCase.assertTrue):
     # mavaff...
     unittest.TestCase.assert_ = unittest.TestCase.assertTrue
     unittest.TestCase.failUnless = unittest.TestCase.assertTrue
@@ -99,12 +101,46 @@ class ConnectingTestCase(unittest.TestCase):
             self._conns
         except AttributeError, e:
             raise AttributeError(
-                "%s (did you remember calling ConnectingTestCase.setUp()?)"
+                "%s (did you forget to call ConnectingTestCase.setUp()?)"
                 % e)
 
+        if 'dsn' in kwargs:
+            conninfo = kwargs.pop('dsn')
+        else:
+            conninfo = dsn
         import psycopg2
-        conn = psycopg2.connect(dsn, **kwargs)
+        conn = psycopg2.connect(conninfo, **kwargs)
         self._conns.append(conn)
+        return conn
+
+    def repl_connect(self, **kwargs):
+        """Return a connection set up for replication
+
+        The connection is on "PSYCOPG2_TEST_REPL_DSN" unless overridden by
+        a *dsn* kwarg.
+
+        Should raise a skip test if not available, but guard for None on
+        old Python versions.
+        """
+        if repl_dsn is None:
+            return self.skipTest("replication tests disabled by default")
+
+        if 'dsn' not in kwargs:
+            kwargs['dsn'] = repl_dsn
+        import psycopg2
+        try:
+            conn = self.connect(**kwargs)
+            if conn.async == 1:
+                self.wait(conn)
+        except psycopg2.OperationalError, e:
+            # If pgcode is not set it is a genuine connection error
+            # Otherwise we tried to run some bad operation in the connection
+            # (e.g. bug #482) and we'd rather know that.
+            if e.pgcode is None:
+                return self.skipTest("replication db not configured: %s" % e)
+            else:
+                raise
+
         return conn
 
     def _get_conn(self):
@@ -117,6 +153,23 @@ class ConnectingTestCase(unittest.TestCase):
         self._the_conn = conn
 
     conn = property(_get_conn, _set_conn)
+
+    # for use with async connections only
+    def wait(self, cur_or_conn):
+        import psycopg2.extensions
+        pollable = cur_or_conn
+        if not hasattr(pollable, 'poll'):
+            pollable = cur_or_conn.connection
+        while True:
+            state = pollable.poll()
+            if state == psycopg2.extensions.POLL_OK:
+                break
+            elif state == psycopg2.extensions.POLL_READ:
+                select.select([pollable], [], [], 10)
+            elif state == psycopg2.extensions.POLL_WRITE:
+                select.select([], [pollable], [], 10)
+            else:
+                raise Exception("Unexpected result from poll: %r", state)
 
 
 def decorate_all_tests(cls, *decorators):
@@ -134,7 +187,7 @@ def skip_if_no_uuid(f):
     @wraps(f)
     def skip_if_no_uuid_(self):
         try:
-            import uuid
+            import uuid             # noqa
         except ImportError:
             return self.skipTest("uuid not available in this Python version")
 
@@ -182,7 +235,7 @@ def skip_if_no_namedtuple(f):
     @wraps(f)
     def skip_if_no_namedtuple_(self):
         try:
-            from collections import namedtuple
+            from collections import namedtuple              # noqa
         except ImportError:
             return self.skipTest("collections.namedtuple not available")
         else:
@@ -196,7 +249,7 @@ def skip_if_no_iobase(f):
     @wraps(f)
     def skip_if_no_iobase_(self):
         try:
-            from io import TextIOBase
+            from io import TextIOBase                       # noqa
         except ImportError:
             return self.skipTest("io.TextIOBase not found.")
         else:
@@ -208,6 +261,7 @@ def skip_if_no_iobase(f):
 def skip_before_postgres(*ver):
     """Skip a test on PostgreSQL before a certain version."""
     ver = ver + (0,) * (3 - len(ver))
+
     def skip_before_postgres_(f):
         @wraps(f)
         def skip_before_postgres__(self):
@@ -220,9 +274,11 @@ def skip_before_postgres(*ver):
         return skip_before_postgres__
     return skip_before_postgres_
 
+
 def skip_after_postgres(*ver):
     """Skip a test on PostgreSQL after (including) a certain version."""
     ver = ver + (0,) * (3 - len(ver))
+
     def skip_after_postgres_(f):
         @wraps(f)
         def skip_after_postgres__(self):
@@ -234,6 +290,49 @@ def skip_after_postgres(*ver):
 
         return skip_after_postgres__
     return skip_after_postgres_
+
+
+def libpq_version():
+    import psycopg2
+    v = psycopg2.__libpq_version__
+    if v >= 90100:
+        v = psycopg2.extensions.libpq_version()
+    return v
+
+
+def skip_before_libpq(*ver):
+    """Skip a test if libpq we're linked to is older than a certain version."""
+    ver = ver + (0,) * (3 - len(ver))
+
+    def skip_before_libpq_(f):
+        @wraps(f)
+        def skip_before_libpq__(self):
+            v = libpq_version()
+            if v < int("%d%02d%02d" % ver):
+                return self.skipTest("skipped because libpq %d" % v)
+            else:
+                return f(self)
+
+        return skip_before_libpq__
+    return skip_before_libpq_
+
+
+def skip_after_libpq(*ver):
+    """Skip a test if libpq we're linked to is newer than a certain version."""
+    ver = ver + (0,) * (3 - len(ver))
+
+    def skip_after_libpq_(f):
+        @wraps(f)
+        def skip_after_libpq__(self):
+            v = libpq_version()
+            if v >= int("%d%02d%02d" % ver):
+                return self.skipTest("skipped because libpq %s" % v)
+            else:
+                return f(self)
+
+        return skip_after_libpq__
+    return skip_after_libpq_
+
 
 def skip_before_python(*ver):
     """Skip a test on Python before a certain version."""
@@ -249,6 +348,7 @@ def skip_before_python(*ver):
         return skip_before_python__
     return skip_before_python_
 
+
 def skip_from_python(*ver):
     """Skip a test on Python after (including) a certain version."""
     def skip_from_python_(f):
@@ -262,6 +362,7 @@ def skip_from_python(*ver):
 
         return skip_from_python__
     return skip_from_python_
+
 
 def skip_if_no_superuser(f):
     """Skip a test if the database user running the test is not a superuser"""
@@ -279,6 +380,7 @@ def skip_if_no_superuser(f):
 
     return skip_if_no_superuser_
 
+
 def skip_if_green(reason):
     def skip_if_green_(f):
         @wraps(f)
@@ -294,6 +396,7 @@ def skip_if_green(reason):
 
 skip_copy_if_green = skip_if_green("copy in async mode currently not supported")
 
+
 def skip_if_no_getrefcount(f):
     @wraps(f)
     def skip_if_no_getrefcount_(self):
@@ -302,6 +405,7 @@ def skip_if_no_getrefcount(f):
         else:
             return f(self)
     return skip_if_no_getrefcount_
+
 
 def skip_if_windows(f):
     """Skip a test if run on windows"""
@@ -341,8 +445,8 @@ def script_to_py3(script):
         f2.close()
         os.remove(filename)
 
-class py3_raises_typeerror(object):
 
+class py3_raises_typeerror(object):
     def __enter__(self):
         pass
 
@@ -350,4 +454,18 @@ class py3_raises_typeerror(object):
         if sys.version_info[0] >= 3:
             assert type is TypeError
             return True
-        
+
+
+def slow(f):
+    """Decorator to mark slow tests we may want to skip
+
+    Note: in order to find slow tests you can run:
+
+    make check 2>&1 | ts -i "%.s" | sort -n
+    """
+    @wraps(f)
+    def slow_(self):
+        if os.environ.get('PSYCOPG2_TEST_FAST'):
+            return self.skipTest("slow test")
+        return f(self)
+    return slow_

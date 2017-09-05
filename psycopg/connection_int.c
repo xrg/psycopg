@@ -58,12 +58,75 @@ const IsolationLevel conn_isolevels[] = {
 PyObject *
 conn_text_from_chars(connectionObject *self, const char *str)
 {
-#if PY_MAJOR_VERSION < 3
-        return PyString_FromString(str);
-#else
-        const char *codec = self ? self->codec : "ascii";
-        return PyUnicode_Decode(str, strlen(str), codec, "replace");
-#endif
+    return psycopg_text_from_chars_safe(str, -1, self ? self->pydecoder : NULL);
+}
+
+
+/* Encode an unicode object into a bytes object in the connection encoding.
+ *
+ * If no connection or encoding is available, default to utf8
+ */
+PyObject *
+conn_encode(connectionObject *self, PyObject *u)
+{
+    PyObject *t = NULL;
+    PyObject *rv = NULL;
+
+    if (!(self && self->pyencoder)) {
+        rv = PyUnicode_AsUTF8String(u);
+        goto exit;
+    }
+
+    if (!(t = PyObject_CallFunctionObjArgs(self->pyencoder, u, NULL))) {
+        goto exit;
+    }
+
+    if (!(rv = PyTuple_GetItem(t, 0))) { goto exit; }
+    Py_INCREF(rv);
+
+exit:
+    Py_XDECREF(t);
+
+    return rv;
+}
+
+
+/* decode a c string into a Python unicode in the connection encoding
+ *
+ * len can be < 0: in this case it will be calculated
+ *
+ * If no connection or encoding is available, default to utf8
+ */
+PyObject *
+conn_decode(connectionObject *self, const char *str, Py_ssize_t len)
+{
+    PyObject *b = NULL;
+    PyObject *t = NULL;
+    PyObject *rv = NULL;
+
+    if (len < 0) { len = strlen(str); }
+
+    if (self) {
+        if (self->cdecoder) {
+            return self->cdecoder(str, len, NULL);
+        }
+        else if (self->pydecoder) {
+            if (!(b = Bytes_FromStringAndSize(str, len))) { goto exit; }
+            if (!(t = PyObject_CallFunctionObjArgs(self->pydecoder, b, NULL))) {
+                goto exit;
+            }
+            rv = PyTuple_GetItem(t, 0);
+            Py_XINCREF(rv);
+        }
+    }
+    else {
+        return PyUnicode_FromStringAndSize(str, len);
+    }
+
+exit:
+    Py_XDECREF(t);
+    Py_XDECREF(b);
+    return rv;
 }
 
 /* conn_notice_callback - process notices */
@@ -87,13 +150,20 @@ conn_notice_callback(void *args, const char *message)
         /* Discard the notice in case of failed allocation. */
         return;
     }
+    notice->next = NULL;
     notice->message = strdup(message);
     if (NULL == notice->message) {
         free(notice);
         return;
     }
-    notice->next = self->notice_pending;
-    self->notice_pending = notice;
+
+    if (NULL == self->last_notice) {
+        self->notice_pending = self->last_notice = notice;
+    }
+    else {
+        self->last_notice->next = notice;
+        self->last_notice = notice;
+    }
 }
 
 /* Expose the notices received as Python objects.
@@ -104,44 +174,60 @@ void
 conn_notice_process(connectionObject *self)
 {
     struct connectionObject_notice *notice;
-    Py_ssize_t nnotices;
+    PyObject *msg = NULL;
+    PyObject *tmp = NULL;
+    static PyObject *append;
 
     if (NULL == self->notice_pending) {
         return;
     }
 
-    notice =  self->notice_pending;
-    nnotices = PyList_GET_SIZE(self->notice_list);
+    if (!append) {
+        if (!(append = Text_FromUTF8("append"))) {
+            goto error;
+        }
+    }
 
+    notice = self->notice_pending;
     while (notice != NULL) {
-        PyObject *msg;
-        msg = conn_text_from_chars(self, notice->message);
         Dprintf("conn_notice_process: %s", notice->message);
 
-        /* Respect the order in which notices were produced,
-           because in notice_list they are reversed (see ticket #9) */
-        if (msg) {
-            PyList_Insert(self->notice_list, nnotices, msg);
-            Py_DECREF(msg);
+        if (!(msg = conn_text_from_chars(self, notice->message))) { goto error; }
+
+        if (!(tmp = PyObject_CallMethodObjArgs(
+                self->notice_list, append, msg, NULL))) {
+
+            goto error;
         }
-        else {
-            /* We don't really have a way to report errors, so gulp it.
-             * The function should only fail for out of memory, so we are
-             * likely going to die anyway. */
-            PyErr_Clear();
-        }
+
+        Py_DECREF(tmp); tmp = NULL;
+        Py_DECREF(msg); msg = NULL;
 
         notice = notice->next;
     }
 
     /* Remove the oldest item if the queue is getting too long. */
-    nnotices = PyList_GET_SIZE(self->notice_list);
-    if (nnotices > CONN_NOTICES_LIMIT) {
-        PySequence_DelSlice(self->notice_list,
-            0, nnotices - CONN_NOTICES_LIMIT);
+    if (PyList_Check(self->notice_list)) {
+        Py_ssize_t nnotices;
+        nnotices = PyList_GET_SIZE(self->notice_list);
+        if (nnotices > CONN_NOTICES_LIMIT) {
+            if (-1 == PySequence_DelSlice(self->notice_list,
+                    0, nnotices - CONN_NOTICES_LIMIT)) {
+                PyErr_Clear();
+            }
+        }
     }
 
     conn_notice_clean(self);
+    return;
+
+error:
+    Py_XDECREF(tmp);
+    Py_XDECREF(msg);
+    conn_notice_clean(self);
+
+    /* TODO: the caller doesn't expects errors from us */
+    PyErr_Clear();
 }
 
 void
@@ -154,11 +240,11 @@ conn_notice_clean(connectionObject *self)
     while (notice != NULL) {
         tmp = notice;
         notice = notice->next;
-        free((void*)tmp->message);
+        free(tmp->message);
         free(tmp);
     }
 
-    self->notice_pending = NULL;
+    self->last_notice = self->notice_pending = NULL;
 }
 
 
@@ -173,6 +259,15 @@ conn_notifies_process(connectionObject *self)
     PGnotify *pgn = NULL;
     PyObject *notify = NULL;
     PyObject *pid = NULL, *channel = NULL, *payload = NULL;
+    PyObject *tmp = NULL;
+
+    static PyObject *append;
+
+    if (!append) {
+        if (!(append = Text_FromUTF8("append"))) {
+            goto error;
+        }
+    }
 
     while ((pgn = PQnotifies(self->pgconn)) != NULL) {
 
@@ -192,7 +287,11 @@ conn_notifies_process(connectionObject *self)
         Py_DECREF(channel); channel = NULL;
         Py_DECREF(payload); payload = NULL;
 
-        PyList_Append(self->notifies, (PyObject *)notify);
+        if (!(tmp = PyObject_CallMethodObjArgs(
+                self->notifies, append, notify, NULL))) {
+            goto error;
+        }
+        Py_DECREF(tmp); tmp = NULL;
 
         Py_DECREF(notify); notify = NULL;
         PQfreemem(pgn); pgn = NULL;
@@ -201,6 +300,7 @@ conn_notifies_process(connectionObject *self)
 
 error:
     if (pgn) { PQfreemem(pgn); }
+    Py_XDECREF(tmp);
     Py_XDECREF(notify);
     Py_XDECREF(pid);
     Py_XDECREF(channel);
@@ -284,92 +384,168 @@ exit:
     return rv;
 }
 
-/* Convert a PostgreSQL encoding to a Python codec.
- *
- * Set 'codec' to a new copy of the codec name allocated on the Python heap.
- * Return 0 in case of success, else -1 and set an exception.
- *
- * 'enc' should be already normalized (uppercase, no - or _).
+/* set fast access functions according to the currently selected encoding
  */
-RAISES_NEG static int
-conn_encoding_to_codec(const char *enc, char **codec)
+static void
+conn_set_fast_codec(connectionObject *self)
 {
-    char *tmp;
-    Py_ssize_t size;
-    PyObject *pyenc = NULL;
-    int rv = -1;
+    Dprintf("conn_set_fast_codec: encoding=%s", self->encoding);
 
-    /* Find the Py codec name from the PG encoding */
-    if (!(pyenc = PyDict_GetItemString(psycoEncodings, enc))) {
+    if (0 == strcmp(self->encoding, "UTF8")) {
+        Dprintf("conn_set_fast_codec: PyUnicode_DecodeUTF8");
+        self->cdecoder = PyUnicode_DecodeUTF8;
+        return;
+    }
+
+    if (0 == strcmp(self->encoding, "LATIN1")) {
+        Dprintf("conn_set_fast_codec: PyUnicode_DecodeLatin1");
+        self->cdecoder = PyUnicode_DecodeLatin1;
+        return;
+    }
+
+    Dprintf("conn_set_fast_codec: no fast codec");
+    self->cdecoder = NULL;
+}
+
+
+/* Return the Python encoding from a PostgreSQL encoding.
+ *
+ * Optionally return the clean version of the postgres encoding too
+ */
+PyObject *
+conn_pgenc_to_pyenc(const char *encoding, char **clean_encoding)
+{
+    char *pgenc = NULL;
+    PyObject *rv = NULL;
+
+    if (0 > clear_encoding_name(encoding, &pgenc)) { goto exit; }
+    if (!(rv = PyDict_GetItemString(psycoEncodings, pgenc))) {
         PyErr_Format(OperationalError,
-            "no Python codec for client encoding '%s'", enc);
+            "no Python encoding for PostgreSQL encoding '%s'", pgenc);
         goto exit;
     }
+    Py_INCREF(rv);
 
-    /* Convert the codec in a bytes string to extract the c string. */
-    Py_INCREF(pyenc);
-    if (!(pyenc = psycopg_ensure_bytes(pyenc))) {
-        goto exit;
+    if (clean_encoding) {
+        *clean_encoding = pgenc;
     }
-
-    if (-1 == Bytes_AsStringAndSize(pyenc, &tmp, &size)) {
-        goto exit;
+    else {
+        PyMem_Free(pgenc);
     }
-
-    /* have our own copy of the python codec name */
-    rv = psycopg_strdup(codec, tmp, size);
 
 exit:
-    Py_XDECREF(pyenc);
     return rv;
 }
 
-/* Read the client encoding from the connection.
+/* Convert a Postgres encoding into Python encoding and decoding functions.
  *
- * Store the encoding in the pgconn->encoding field and the name of the
- * matching python codec in codec. The buffers are allocated on the Python
- * heap.
+ * Set clean_encoding to a clean version of the Postgres encoding name
+ * and pyenc and pydec to python codec functions.
  *
- * Return 0 on success, else nonzero.
+ * Return 0 on success, else -1 and set an exception.
+ */
+RAISES_NEG static int
+conn_get_python_codec(const char *encoding,
+    char **clean_encoding, PyObject **pyenc, PyObject **pydec)
+{
+    int rv = -1;
+    char *pgenc = NULL;
+    PyObject *encname = NULL;
+    PyObject *enc_tmp = NULL, *dec_tmp = NULL;
+
+    /* get the Python name of the encoding as a C string */
+    if (!(encname = conn_pgenc_to_pyenc(encoding, &pgenc))) { goto exit; }
+    if (!(encname = psycopg_ensure_bytes(encname))) { goto exit; }
+
+    /* Look up the codec functions */
+    if (!(enc_tmp = PyCodec_Encoder(Bytes_AS_STRING(encname)))) { goto exit; }
+    if (!(dec_tmp = PyCodec_Decoder(Bytes_AS_STRING(encname)))) { goto exit; }
+
+    /* success */
+    *pyenc = enc_tmp; enc_tmp = NULL;
+    *pydec = dec_tmp; dec_tmp = NULL;
+    *clean_encoding = pgenc; pgenc = NULL;
+    rv = 0;
+
+exit:
+    Py_XDECREF(enc_tmp);
+    Py_XDECREF(dec_tmp);
+    Py_XDECREF(encname);
+    PyMem_Free(pgenc);
+
+    return rv;
+}
+
+
+/* Store the encoding in the pgconn->encoding field and set the other related
+ * encoding fields in the connection structure.
+ *
+ * Return 0 on success, else -1 and set an exception.
+ */
+RAISES_NEG static int
+conn_store_encoding(connectionObject *self, const char *encoding)
+{
+    int rv = -1;
+    char *pgenc = NULL;
+    PyObject *enc_tmp = NULL, *dec_tmp = NULL;
+
+    if (0 > conn_get_python_codec(encoding, &pgenc, &enc_tmp, &dec_tmp)) {
+        goto exit;
+    }
+
+    /* Good, success: store the encoding/codec in the connection. */
+    {
+        char *tmp = self->encoding;
+        self->encoding = pgenc;
+        PyMem_Free(tmp);
+        pgenc = NULL;
+    }
+
+    Py_CLEAR(self->pyencoder);
+    self->pyencoder = enc_tmp;
+    enc_tmp = NULL;
+
+    Py_CLEAR(self->pydecoder);
+    self->pydecoder = dec_tmp;
+    dec_tmp = NULL;
+
+    conn_set_fast_codec(self);
+
+    rv = 0;
+
+exit:
+    Py_XDECREF(enc_tmp);
+    Py_XDECREF(dec_tmp);
+    PyMem_Free(pgenc);
+    return rv;
+}
+
+
+/* Read the client encoding from the backend and store it in the connection.
+ *
+ * Return 0 on success, else -1.
  */
 RAISES_NEG static int
 conn_read_encoding(connectionObject *self, PGconn *pgconn)
 {
-    char *enc = NULL, *codec = NULL;
-    const char *tmp;
+    const char *encoding;
     int rv = -1;
 
-    tmp = PQparameterStatus(pgconn, "client_encoding");
-    Dprintf("conn_connect: client encoding: %s", tmp ? tmp : "(none)");
-    if (!tmp) {
+    encoding = PQparameterStatus(pgconn, "client_encoding");
+    Dprintf("conn_connect: client encoding: %s", encoding ? encoding : "(none)");
+    if (!encoding) {
         PyErr_SetString(OperationalError,
             "server didn't return client encoding");
         goto exit;
     }
 
-    if (0 > clear_encoding_name(tmp, &enc)) {
+    if (0 > conn_store_encoding(self, encoding)) {
         goto exit;
     }
-
-    /* Look for this encoding in Python codecs. */
-    if (0 > conn_encoding_to_codec(enc, &codec)) {
-        goto exit;
-    }
-
-    /* Good, success: store the encoding/codec in the connection. */
-    PyMem_Free(self->encoding);
-    self->encoding = enc;
-    enc = NULL;
-
-    PyMem_Free(self->codec);
-    self->codec = codec;
-    codec = NULL;
 
     rv = 0;
 
 exit:
-    PyMem_Free(enc);
-    PyMem_Free(codec);
     return rv;
 }
 
@@ -457,6 +633,25 @@ conn_setup_cancel(connectionObject *self, PGconn *pgconn)
     return 0;
 }
 
+/* Return 1 if the "replication" keyword is set in the DSN, 0 otherwise */
+static int
+dsn_has_replication(char *pgdsn)
+{
+    int ret = 0;
+    PQconninfoOption *connopts, *ptr;
+
+    connopts = PQconninfoParse(pgdsn, NULL);
+
+    for(ptr = connopts; ptr->keyword != NULL; ptr++) {
+      if(strcmp(ptr->keyword, "replication") == 0 && ptr->val != NULL)
+        ret = 1;
+    }
+
+    PQconninfoFree(connopts);
+
+    return ret;
+}
+
 
 /* Return 1 if the server datestyle allows us to work without problems,
    0 if it needs to be set to something better, e.g. ISO. */
@@ -485,28 +680,29 @@ conn_setup(connectionObject *self, PGconn *pgconn)
 {
     PGresult *pgres = NULL;
     char *error = NULL;
+    int rv = -1;
 
     self->equote = conn_get_standard_conforming_strings(pgconn);
     self->server_version = conn_get_server_version(pgconn);
     self->protocol = conn_get_protocol_version(self->pgconn);
     if (3 != self->protocol) {
         PyErr_SetString(InterfaceError, "only protocol 3 supported");
-        return -1;
+        goto exit;
     }
 
     if (0 > conn_read_encoding(self, pgconn)) {
-        return -1;
+        goto exit;
     }
 
     if (0 > conn_setup_cancel(self, pgconn)) {
-        return -1;
+        goto exit;
     }
 
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&self->lock);
     Py_BLOCK_THREADS;
 
-    if (!conn_is_datestyle_ok(self->pgconn)) {
+    if (!dsn_has_replication(self->dsn) && !conn_is_datestyle_ok(self->pgconn)) {
         int res;
         Py_UNBLOCK_THREADS;
         res = pq_set_guc_locked(self, "datestyle", "ISO",
@@ -514,18 +710,23 @@ conn_setup(connectionObject *self, PGconn *pgconn)
         Py_BLOCK_THREADS;
         if (res < 0) {
             pq_complete_error(self, &pgres, &error);
-            return -1;
+            goto unlock;
         }
     }
 
     /* for reset */
     self->autocommit = 0;
 
+    /* success */
+    rv = 0;
+
+unlock:
     Py_UNBLOCK_THREADS;
     pthread_mutex_unlock(&self->lock);
     Py_END_ALLOW_THREADS;
 
-    return 0;
+exit:
+    return rv;
 }
 
 /* conn_connect - execute a connection to the database */
@@ -822,8 +1023,11 @@ _conn_poll_setup_async(connectionObject *self)
         self->autocommit = 1;
 
         /* If the datestyle is ISO or anything else good,
-         * we can skip the CONN_STATUS_DATESTYLE step. */
-        if (!conn_is_datestyle_ok(self->pgconn)) {
+         * we can skip the CONN_STATUS_DATESTYLE step.
+         * Note that we cannot change the datestyle on a replication
+         * connection.
+         */
+        if (!dsn_has_replication(self->dsn) && !conn_is_datestyle_ok(self->pgconn)) {
             Dprintf("conn_poll: status -> CONN_STATUS_DATESTYLE");
             self->status = CONN_STATUS_DATESTYLE;
             if (0 == pq_send_query(self, psyco_datestyle)) {
@@ -1160,21 +1364,19 @@ endlock:
 /* conn_set_client_encoding - switch client encoding on connection */
 
 RAISES_NEG int
-conn_set_client_encoding(connectionObject *self, const char *enc)
+conn_set_client_encoding(connectionObject *self, const char *pgenc)
 {
     PGresult *pgres = NULL;
     char *error = NULL;
     int res = -1;
-    char *codec = NULL;
     char *clean_enc = NULL;
+
+    /* We must know what python encoding this encoding is. */
+    if (0 > clear_encoding_name(pgenc, &clean_enc)) { goto exit; }
 
     /* If the current encoding is equal to the requested one we don't
        issue any query to the backend */
-    if (strcmp(self->encoding, enc) == 0) return 0;
-
-    /* We must know what python codec this encoding is. */
-    if (0 > clear_encoding_name(enc, &clean_enc)) { goto exit; }
-    if (0 > conn_encoding_to_codec(clean_enc, &codec)) { goto exit; }
+    if (strcmp(self->encoding, clean_enc) == 0) return 0;
 
     Py_BEGIN_ALLOW_THREADS;
     pthread_mutex_lock(&self->lock);
@@ -1190,35 +1392,21 @@ conn_set_client_encoding(connectionObject *self, const char *enc)
         goto endlock;
     }
 
-    /* no error, we can proceed and store the new encoding */
-    {
-        char *tmp = self->encoding;
-        self->encoding = clean_enc;
-        PyMem_Free(tmp);
-        clean_enc = NULL;
-    }
-
-    /* Store the python codec too. */
-    {
-        char *tmp = self->codec;
-        self->codec = codec;
-        PyMem_Free(tmp);
-        codec = NULL;
-    }
-
-    Dprintf("conn_set_client_encoding: set encoding to %s (codec: %s)",
-            self->encoding, self->codec);
-
 endlock:
     pthread_mutex_unlock(&self->lock);
     Py_END_ALLOW_THREADS;
 
-    if (res < 0)
+    if (res < 0) {
         pq_complete_error(self, &pgres, &error);
+        goto exit;
+    }
+
+    res = conn_store_encoding(self, pgenc);
+
+    Dprintf("conn_set_client_encoding: encoding set to %s", self->encoding);
 
 exit:
     PyMem_Free(clean_enc);
-    PyMem_Free(codec);
 
     return res;
 }

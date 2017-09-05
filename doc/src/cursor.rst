@@ -172,42 +172,53 @@ The ``cursor`` class
 
 
     .. method:: execute(operation [, parameters])
-      
+
         Prepare and execute a database operation (query or command).
 
         Parameters may be provided as sequence or mapping and will be bound to
         variables in the operation.  Variables are specified either with
         positional (``%s``) or named (:samp:`%({name})s`) placeholders. See
         :ref:`query-parameters`.
-        
+
         The method returns `!None`. If a query was executed, the returned
         values can be retrieved using |fetch*|_ methods.
 
 
     .. method:: executemany(operation, seq_of_parameters)
-      
+
         Prepare a database operation (query or command) and then execute it
         against all parameter tuples or mappings found in the sequence
         `seq_of_parameters`.
-        
+
         The function is mostly useful for commands that update the database:
         any result set returned by the query is discarded.
-        
+
         Parameters are bounded to the query using the same rules described in
         the `~cursor.execute()` method.
 
+        .. warning::
+            In its current implementation this method is not faster than
+            executing `~cursor.execute()` in a loop. For better performance
+            you can use the functions described in :ref:`fast-exec`.
+
 
     .. method:: callproc(procname [, parameters])
-            
+
         Call a stored database procedure with the given name. The sequence of
         parameters must contain one entry for each argument that the procedure
-        expects. The result of the call is returned as modified copy of the
-        input sequence. Input parameters are left untouched, output and
-        input/output parameters replaced with possibly new values.
-        
-        The procedure may also provide a result set as output. This must then
-        be made available through the standard |fetch*|_ methods.
+        expects. Overloaded procedures are supported. Named parameters can be
+        used by supplying the parameters as a dictionary.
 
+        This function is, at present, not DBAPI-compliant. The return value is
+        supposed to consist of the sequence of parameters with modified output
+        and input/output parameters. In future versions, the DBAPI-compliant
+        return value may be implemented, but for now the function returns None.
+
+        The procedure may provide a result set as output. This is then made
+        available through the standard |fetch*|_ methods.
+
+        .. versionchanged:: 2.7
+          added support for named arguments.
 
     .. method:: mogrify(operation [, parameters])
 
@@ -494,6 +505,9 @@ The ``cursor`` class
 
     .. rubric:: COPY-related methods
 
+    Efficiently copy data from file-like objects to the database and back. See
+    :ref:`copy` for an overview.
+
     .. extension::
 
         The :sql:`COPY` command is a PostgreSQL extension to the SQL standard.
@@ -502,7 +516,7 @@ The ``cursor`` class
     .. method:: copy_from(file, table, sep='\\t', null='\\\\N', size=8192, columns=None)
 
         Read data *from* the file-like object *file* appending them to
-        the table named *table*.  See :ref:`copy` for an overview.
+        the table named *table*.
 
         :param file: file-like object to read data from.  It must have both
             `!read()` and `!readline()` methods.
@@ -523,6 +537,13 @@ The ``cursor`` class
             >>> cur.execute("select * from test where id > 5;")
             >>> cur.fetchall()
             [(6, 42, 'foo'), (7, 74, 'bar')]
+
+        .. note:: the name of the table is not quoted: if the table name
+            contains uppercase letters or special characters it must be quoted
+            with double quotes::
+
+                cur.copy_from(f, '"TABLE"')
+
 
         .. versionchanged:: 2.0.6
             added the *columns* parameter.
@@ -552,6 +573,12 @@ The ``cursor`` class
             1|100|abc'def
             2|\N|dada
             ...
+
+        .. note:: the name of the table is not quoted: if the table name
+            contains uppercase letters or special characters it must be quoted
+            with double quotes::
+
+                cur.copy_to(f, '"TABLE"')
 
         .. versionchanged:: 2.0.6
             added the *columns* parameter.

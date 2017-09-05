@@ -505,7 +505,11 @@ PyTypeObject typecastType = {
     0,          /*tp_print*/
     0,          /*tp_getattr*/
     0,          /*tp_setattr*/
+#if PY_VERSION_HEX < 0x03000000
     typecast_cmp, /*tp_compare*/
+#else
+    0,          /*tp_reserved*/
+#endif
     typecast_repr, /*tp_repr*/
     0,          /*tp_as_number*/
     0,          /*tp_as_sequence*/
@@ -685,8 +689,7 @@ typecast_cast(PyObject *obj, const char *str, Py_ssize_t len, PyObject *curs)
 #if PY_MAJOR_VERSION < 3
             s = PyString_FromStringAndSize(str, len);
 #else
-            s = PyUnicode_Decode(str, len,
-                ((cursorObject *)curs)->conn->codec, NULL);
+            s = conn_decode(((cursorObject *)curs)->conn, str, len);
 #endif
         }
         else {

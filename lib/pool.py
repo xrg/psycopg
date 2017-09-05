@@ -51,7 +51,7 @@ class AbstractConnectionPool(object):
 
         self._pool = []
         self._used = {}
-        self._rused = {} # id(conn) -> key map
+        self._rused = {}    # id(conn) -> key map
         self._keys = 0
 
         for i in range(self.minconn):
@@ -74,8 +74,10 @@ class AbstractConnectionPool(object):
 
     def _getconn(self, key=None):
         """Get a free connection and assign it to 'key' if not None."""
-        if self.closed: raise PoolError("connection pool is closed")
-        if key is None: key = self._getkey()
+        if self.closed:
+            raise PoolError("connection pool is closed")
+        if key is None:
+            key = self._getkey()
 
         if key in self._used:
             return self._used[key]
@@ -91,8 +93,10 @@ class AbstractConnectionPool(object):
 
     def _putconn(self, conn, key=None, close=False):
         """Put away a connection."""
-        if self.closed: raise PoolError("connection pool is closed")
-        if key is None: key = self._rused.get(id(conn))
+        if self.closed:
+            raise PoolError("connection pool is closed")
+        if key is None:
+            key = self._rused.get(id(conn))
 
         if not key:
             raise PoolError("trying to put unkeyed connection")
@@ -129,7 +133,8 @@ class AbstractConnectionPool(object):
         an already closed connection. If you call .closeall() make sure
         your code can deal with it.
         """
-        if self.closed: raise PoolError("connection pool is closed")
+        if self.closed:
+            raise PoolError("connection pool is closed")
         for conn in self._pool + list(self._used.values()):
             try:
                 conn.close()
@@ -143,7 +148,7 @@ class SimpleConnectionPool(AbstractConnectionPool):
 
     getconn = AbstractConnectionPool._getconn
     putconn = AbstractConnectionPool._putconn
-    closeall   = AbstractConnectionPool._closeall
+    closeall = AbstractConnectionPool._closeall
 
 
 class ThreadedConnectionPool(AbstractConnectionPool):
@@ -204,8 +209,8 @@ class PersistentConnectionPool(AbstractConnectionPool):
 
         # we we'll need the thread module, to determine thread ids, so we
         # import it here and copy it in an instance variable
-        import thread
-        self.__thread = thread
+        import thread as _thread  # work around for 2to3 bug - see ticket #348
+        self.__thread = _thread
 
     def getconn(self):
         """Generate thread id and return a connection."""
@@ -221,7 +226,8 @@ class PersistentConnectionPool(AbstractConnectionPool):
         key = self.__thread.get_ident()
         self._lock.acquire()
         try:
-            if not conn: conn = self._used[key]
+            if not conn:
+                conn = self._used[key]
             self._putconn(conn, key, close)
         finally:
             self._lock.release()

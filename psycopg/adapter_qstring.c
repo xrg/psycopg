@@ -42,38 +42,32 @@ qstring_quote(qstringObject *self)
     PyObject *str = NULL;
     char *s, *buffer = NULL;
     Py_ssize_t len, qlen;
-    const char *encoding = default_encoding;
+    const char *encoding;
     PyObject *rv = NULL;
 
-    /* if the wrapped object is an unicode object we can encode it to match
-       conn->encoding but if the encoding is not specified we don't know what
-       to do and we raise an exception */
-    if (self->conn) {
-        encoding = self->conn->codec;
+    if (PyUnicode_Check(self->wrapped)) {
+        if (self->conn) {
+            if (!(str = conn_encode(self->conn, self->wrapped))) { goto exit; }
+        }
+        else {
+            encoding = self->encoding ? self->encoding : default_encoding;
+            if(!(str = PyUnicode_AsEncodedString(self->wrapped, encoding, NULL))) {
+                goto exit;
+            }
+        }
     }
 
-    Dprintf("qstring_quote: encoding to %s", encoding);
-
-    if (PyUnicode_Check(self->wrapped) && encoding) {
-        str = PyUnicode_AsEncodedString(self->wrapped, encoding, NULL);
-        Dprintf("qstring_quote: got encoded object at %p", str);
-        if (str == NULL) goto exit;
-    }
-
-#if PY_MAJOR_VERSION < 3
-    /* if the wrapped object is a simple string, we don't know how to
+    /* if the wrapped object is a binary string, we don't know how to
        (re)encode it, so we pass it as-is */
-    else if (PyString_Check(self->wrapped)) {
+    else if (Bytes_Check(self->wrapped)) {
         str = self->wrapped;
         /* INCREF to make it ref-wise identical to unicode one */
         Py_INCREF(str);
     }
-#endif
 
     /* if the wrapped object is not a string, this is an error */
     else {
-        PyErr_SetString(PyExc_TypeError,
-                        "can't quote non-string object (or missing encoding)");
+        PyErr_SetString(PyExc_TypeError, "can't quote non-string object");
         goto exit;
     }
 
@@ -150,13 +144,35 @@ qstring_conform(qstringObject *self, PyObject *args)
 static PyObject *
 qstring_get_encoding(qstringObject *self)
 {
-    const char *encoding = default_encoding;
-
     if (self->conn) {
-        encoding = self->conn->codec;
+        return conn_pgenc_to_pyenc(self->conn->encoding, NULL);
     }
+    else {
+        return Text_FromUTF8(self->encoding ? self->encoding : default_encoding);
+    }
+}
 
-    return Text_FromUTF8(encoding);
+static int
+qstring_set_encoding(qstringObject *self, PyObject *pyenc)
+{
+    int rv = -1;
+    const char *tmp;
+    char *cenc;
+
+    /* get a C copy of the encoding (which may come from unicode) */
+    Py_INCREF(pyenc);
+    if (!(pyenc = psycopg_ensure_bytes(pyenc))) { goto exit; }
+    if (!(tmp = Bytes_AsString(pyenc))) { goto exit; }
+    if (0 > psycopg_strdup(&cenc, tmp, -1)) { goto exit; }
+
+    Dprintf("qstring_set_encoding: encoding set to %s", cenc);
+    PyMem_Free((void *)self->encoding);
+    self->encoding = cenc;
+    rv = 0;
+
+exit:
+    Py_XDECREF(pyenc);
+    return rv;
 }
 
 /** the QuotedString object **/
@@ -183,7 +199,7 @@ static PyMethodDef qstringObject_methods[] = {
 static PyGetSetDef qstringObject_getsets[] = {
     { "encoding",
         (getter)qstring_get_encoding,
-        (setter)NULL,
+        (setter)qstring_set_encoding,
         "current encoding of the adapter" },
     {NULL}
 };
@@ -216,6 +232,7 @@ qstring_dealloc(PyObject* obj)
     Py_CLEAR(self->wrapped);
     Py_CLEAR(self->buffer);
     Py_CLEAR(self->conn);
+    PyMem_Free((void *)self->encoding);
 
     Dprintf("qstring_dealloc: deleted qstring object at %p, refcnt = "
         FORMAT_CODE_PY_SSIZE_T,
