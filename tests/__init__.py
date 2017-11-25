@@ -22,6 +22,11 @@
 # FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
 # License for more details.
 
+# Convert warnings into errors here. We can't do it with -W because on
+# Travis importing site raises a warning.
+import warnings
+warnings.simplefilter('error')  # noqa
+
 import sys
 from testconfig import dsn
 from testutils import unittest
@@ -31,12 +36,12 @@ import test_bugX000
 import test_bug_gc
 import test_cancel
 import test_connection
-import test_replication
 import test_copy
 import test_cursor
 import test_dates
 import test_errcodes
 import test_extras_dictcursor
+import test_fast_executemany
 import test_green
 import test_ipaddress
 import test_lobject
@@ -44,10 +49,15 @@ import test_module
 import test_notify
 import test_psycopg2_dbapi20
 import test_quote
+import test_replication
+import test_sql
 import test_transaction
 import test_types_basic
 import test_types_extras
 import test_with
+
+if sys.version_info[:2] < (3, 6):
+    import test_async_keyword
 
 
 def test_suite():
@@ -64,16 +74,18 @@ def test_suite():
 
     suite = unittest.TestSuite()
     suite.addTest(test_async.test_suite())
+    if sys.version_info[:2] < (3, 6):
+        suite.addTest(test_async_keyword.test_suite())
     suite.addTest(test_bugX000.test_suite())
     suite.addTest(test_bug_gc.test_suite())
     suite.addTest(test_cancel.test_suite())
     suite.addTest(test_connection.test_suite())
-    suite.addTest(test_replication.test_suite())
     suite.addTest(test_copy.test_suite())
     suite.addTest(test_cursor.test_suite())
     suite.addTest(test_dates.test_suite())
     suite.addTest(test_errcodes.test_suite())
     suite.addTest(test_extras_dictcursor.test_suite())
+    suite.addTest(test_fast_executemany.test_suite())
     suite.addTest(test_green.test_suite())
     suite.addTest(test_ipaddress.test_suite())
     suite.addTest(test_lobject.test_suite())
@@ -81,11 +93,14 @@ def test_suite():
     suite.addTest(test_notify.test_suite())
     suite.addTest(test_psycopg2_dbapi20.test_suite())
     suite.addTest(test_quote.test_suite())
+    suite.addTest(test_replication.test_suite())
+    suite.addTest(test_sql.test_suite())
     suite.addTest(test_transaction.test_suite())
     suite.addTest(test_types_basic.test_suite())
     suite.addTest(test_types_extras.test_suite())
     suite.addTest(test_with.test_suite())
     return suite
+
 
 if __name__ == '__main__':
     unittest.main(defaultTest='test_suite')

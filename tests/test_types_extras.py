@@ -17,6 +17,7 @@ from __future__ import with_statement
 
 import re
 import sys
+import warnings
 from decimal import Decimal
 from datetime import date, datetime
 from functools import wraps
@@ -28,13 +29,6 @@ from testutils import (unittest, skip_if_no_uuid, skip_before_postgres,
 import psycopg2
 import psycopg2.extras
 import psycopg2.extensions as ext
-
-
-def filter_scs(conn, s):
-    if conn.get_parameter_status("standard_conforming_strings") == 'off':
-        return s
-    else:
-        return s.replace(b"E'", b"'")
 
 
 class TypesExtrasTests(ConnectingTestCase):
@@ -76,7 +70,10 @@ class TypesExtrasTests(ConnectingTestCase):
         self.failUnless(type(s) == list and len(s) == 0)
 
     def testINET(self):
-        psycopg2.extras.register_inet()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            psycopg2.extras.register_inet()
+
         i = psycopg2.extras.Inet("192.168.1.0/24")
         s = self.execute("SELECT %s AS foo", (i,))
         self.failUnless(i.addr == s.addr)
@@ -85,7 +82,10 @@ class TypesExtrasTests(ConnectingTestCase):
         self.failUnless(s is None)
 
     def testINETARRAY(self):
-        psycopg2.extras.register_inet()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', DeprecationWarning)
+            psycopg2.extras.register_inet()
+
         i = psycopg2.extras.Inet("192.168.1.0/24")
         s = self.execute("SELECT %s AS foo", ([i],))
         self.failUnless(i.addr == s[0].addr)
@@ -98,17 +98,13 @@ class TypesExtrasTests(ConnectingTestCase):
         i = Inet("192.168.1.0/24")
         a = psycopg2.extensions.adapt(i)
         a.prepare(self.conn)
-        self.assertEqual(
-            filter_scs(self.conn, b"E'192.168.1.0/24'::inet"),
-            a.getquoted())
+        self.assertQuotedEqual(a.getquoted(), b"'192.168.1.0/24'::inet")
 
         # adapts ok with unicode too
         i = Inet(u"192.168.1.0/24")
         a = psycopg2.extensions.adapt(i)
         a.prepare(self.conn)
-        self.assertEqual(
-            filter_scs(self.conn, b"E'192.168.1.0/24'::inet"),
-            a.getquoted())
+        self.assertQuotedEqual(a.getquoted(), b"'192.168.1.0/24'::inet")
 
     def test_adapt_fail(self):
         class Foo(object):
@@ -153,13 +149,12 @@ class HstoreTestCase(ConnectingTestCase):
         ii.sort()
 
         self.assertEqual(len(ii), len(o))
-        self.assertEqual(ii[0], filter_scs(self.conn, b"(E'a' => E'1')"))
-        self.assertEqual(ii[1], filter_scs(self.conn, b"(E'b' => E'''')"))
-        self.assertEqual(ii[2], filter_scs(self.conn, b"(E'c' => NULL)"))
+        self.assertQuotedEqual(ii[0], b"('a' => '1')")
+        self.assertQuotedEqual(ii[1], b"('b' => '''')")
+        self.assertQuotedEqual(ii[2], b"('c' => NULL)")
         if 'd' in o:
             encc = u'\xe0'.encode(psycopg2.extensions.encodings[self.conn.encoding])
-            self.assertEqual(ii[3],
-                filter_scs(self.conn, b"(E'd' => E'" + encc + b"')"))
+            self.assertQuotedEqual(ii[3], b"('d' => '" + encc + b"')")
 
     def test_adapt_9(self):
         if self.conn.server_version < 90000:
@@ -183,16 +178,17 @@ class HstoreTestCase(ConnectingTestCase):
         ii = zip(kk, vv)
         ii.sort()
 
-        def f(*args):
-            return tuple([filter_scs(self.conn, s) for s in args])
-
         self.assertEqual(len(ii), len(o))
-        self.assertEqual(ii[0], f(b"E'a'", b"E'1'"))
-        self.assertEqual(ii[1], f(b"E'b'", b"E''''"))
-        self.assertEqual(ii[2], f(b"E'c'", b"NULL"))
+        self.assertQuotedEqual(ii[0][0], b"'a'")
+        self.assertQuotedEqual(ii[0][1], b"'1'")
+        self.assertQuotedEqual(ii[1][0], b"'b'")
+        self.assertQuotedEqual(ii[1][1], b"''''")
+        self.assertQuotedEqual(ii[2][0], b"'c'")
+        self.assertQuotedEqual(ii[2][1], b"NULL")
         if 'd' in o:
             encc = u'\xe0'.encode(psycopg2.extensions.encodings[self.conn.encoding])
-            self.assertEqual(ii[3], f(b"E'd'", b"E'" + encc + b"'"))
+            self.assertQuotedEqual(ii[3][0], b"'d'")
+            self.assertQuotedEqual(ii[3][1], b"'" + encc + b"'")
 
     def test_parse(self):
         from psycopg2.extras import HstoreAdapter
@@ -890,7 +886,7 @@ class JsonTestCase(ConnectingTestCase):
 
         curs = self.conn.cursor()
         for obj in enumerate(objs):
-            self.assertEqual(curs.mogrify("%s", (Json(obj),)),
+            self.assertQuotedEqual(curs.mogrify("%s", (Json(obj),)),
                 psycopg2.extensions.QuotedString(json.dumps(obj)).getquoted())
 
     @skip_if_no_json_module
@@ -908,7 +904,7 @@ class JsonTestCase(ConnectingTestCase):
 
         def dumps(obj):
             return json.dumps(obj, cls=DecimalEncoder)
-        self.assertEqual(curs.mogrify("%s", (Json(obj, dumps=dumps),)),
+        self.assertQuotedEqual(curs.mogrify("%s", (Json(obj, dumps=dumps),)),
             b"'123.45'")
 
     @skip_if_no_json_module
@@ -927,7 +923,7 @@ class JsonTestCase(ConnectingTestCase):
 
         curs = self.conn.cursor()
         obj = Decimal('123.45')
-        self.assertEqual(curs.mogrify("%s", (MyJson(obj),)), b"'123.45'")
+        self.assertQuotedEqual(curs.mogrify("%s", (MyJson(obj),)), b"'123.45'")
 
     @skip_if_no_json_module
     def test_register_on_dict(self):
@@ -937,7 +933,8 @@ class JsonTestCase(ConnectingTestCase):
         try:
             curs = self.conn.cursor()
             obj = {'a': 123}
-            self.assertEqual(curs.mogrify("%s", (obj,)), b"""'{"a": 123}'""")
+            self.assertQuotedEqual(
+                curs.mogrify("%s", (obj,)), b"""'{"a": 123}'""")
         finally:
             del psycopg2.extensions.adapters[dict, ext.ISQLQuote]
 
@@ -1087,6 +1084,25 @@ class JsonTestCase(ConnectingTestCase):
         # no pesky b's
         self.assert_(s.startswith("'"))
         self.assert_(s.endswith("'"))
+
+    @skip_if_no_json_module
+    @skip_before_postgres(8, 2)
+    def test_scs(self):
+        cnn_on = self.connect(options="-c standard_conforming_strings=on")
+        cur_on = cnn_on.cursor()
+        self.assertEqual(
+            cur_on.mogrify("%s", [psycopg2.extras.Json({'a': '"'})]),
+            b'\'{"a": "\\""}\'')
+
+        cnn_off = self.connect(options="-c standard_conforming_strings=off")
+        cur_off = cnn_off.cursor()
+        self.assertEqual(
+            cur_off.mogrify("%s", [psycopg2.extras.Json({'a': '"'})]),
+            b'E\'{"a": "\\\\""}\'')
+
+        self.assertEqual(
+            cur_on.mogrify("%s", [psycopg2.extras.Json({'a': '"'})]),
+            b'\'{"a": "\\""}\'')
 
 
 def skip_if_no_jsonb_type(f):
@@ -1764,184 +1780,6 @@ class RangeCasterTestCase(ConnectingTestCase):
             del ext.adapters[r.range, ext.ISQLQuote]
 
 decorate_all_tests(RangeCasterTestCase, skip_if_no_range)
-
-
-class TestFastExecute(ConnectingTestCase):
-    def setUp(self):
-        super(TestFastExecute, self).setUp()
-        cur = self.conn.cursor()
-        cur.execute("""create table testfast (
-            id serial primary key, date date, val int, data text)""")
-
-    def test_paginate(self):
-        def pag(seq):
-            return psycopg2.extras._paginate(seq, 100)
-
-        self.assertEqual(list(pag([])), [])
-        self.assertEqual(list(pag([1])), [[1]])
-        self.assertEqual(list(pag(range(99))), [list(range(99))])
-        self.assertEqual(list(pag(range(100))), [list(range(100))])
-        self.assertEqual(list(pag(range(101))), [list(range(100)), [100]])
-        self.assertEqual(
-            list(pag(range(200))), [list(range(100)), list(range(100, 200))])
-        self.assertEqual(
-            list(pag(range(1000))),
-            [list(range(i * 100, (i + 1) * 100)) for i in range(10)])
-
-    def test_execute_batch_empty(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, val) values (%s, %s)",
-            [])
-        cur.execute("select * from testfast order by id")
-        self.assertEqual(cur.fetchall(), [])
-
-    def test_execute_batch_one(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, val) values (%s, %s)",
-            iter([(1, 10)]))
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(1, 10)])
-
-    def test_execute_batch_tuples(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, date, val) values (%s, %s, %s)",
-            ((i, date(2017, 1, i + 1), i * 10) for i in range(10)))
-        cur.execute("select id, date, val from testfast order by id")
-        self.assertEqual(cur.fetchall(),
-            [(i, date(2017, 1, i + 1), i * 10) for i in range(10)])
-
-    def test_execute_batch_many(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, val) values (%s, %s)",
-            ((i, i * 10) for i in range(1000)))
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(i, i * 10) for i in range(1000)])
-
-    def test_execute_batch_pages(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, val) values (%s, %s)",
-            ((i, i * 10) for i in range(25)),
-            page_size=10)
-
-        # last command was 5 statements
-        self.assertEqual(sum(c == u';' for c in cur.query.decode('ascii')), 4)
-
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(i, i * 10) for i in range(25)])
-
-    def test_execute_batch_unicode(self):
-        cur = self.conn.cursor()
-        ext.register_type(ext.UNICODE, cur)
-        snowman = u"\u2603"
-
-        # unicode in statement
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, data) values (%%s, %%s) -- %s" % snowman,
-            [(1, 'x')])
-        cur.execute("select id, data from testfast where id = 1")
-        self.assertEqual(cur.fetchone(), (1, 'x'))
-
-        # unicode in data
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, data) values (%s, %s)",
-            [(2, snowman)])
-        cur.execute("select id, data from testfast where id = 2")
-        self.assertEqual(cur.fetchone(), (2, snowman))
-
-        # unicode in both
-        psycopg2.extras.execute_batch(cur,
-            "insert into testfast (id, data) values (%%s, %%s) -- %s" % snowman,
-            [(3, snowman)])
-        cur.execute("select id, data from testfast where id = 3")
-        self.assertEqual(cur.fetchone(), (3, snowman))
-
-    def test_execute_values_empty(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, val) values %s",
-            [])
-        cur.execute("select * from testfast order by id")
-        self.assertEqual(cur.fetchall(), [])
-
-    def test_execute_values_one(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, val) values %s",
-            iter([(1, 10)]))
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(1, 10)])
-
-    def test_execute_values_tuples(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, date, val) values %s",
-            ((i, date(2017, 1, i + 1), i * 10) for i in range(10)))
-        cur.execute("select id, date, val from testfast order by id")
-        self.assertEqual(cur.fetchall(),
-            [(i, date(2017, 1, i + 1), i * 10) for i in range(10)])
-
-    def test_execute_values_dicts(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, date, val) values %s",
-            (dict(id=i, date=date(2017, 1, i + 1), val=i * 10, foo="bar")
-                for i in range(10)),
-            template='(%(id)s, %(date)s, %(val)s)')
-        cur.execute("select id, date, val from testfast order by id")
-        self.assertEqual(cur.fetchall(),
-            [(i, date(2017, 1, i + 1), i * 10) for i in range(10)])
-
-    def test_execute_values_many(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, val) values %s",
-            ((i, i * 10) for i in range(1000)))
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(i, i * 10) for i in range(1000)])
-
-    def test_execute_values_pages(self):
-        cur = self.conn.cursor()
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, val) values %s",
-            ((i, i * 10) for i in range(25)),
-            page_size=10)
-
-        # last statement was 5 tuples (one parens is for the fields list)
-        self.assertEqual(sum(c == '(' for c in cur.query.decode('ascii')), 6)
-
-        cur.execute("select id, val from testfast order by id")
-        self.assertEqual(cur.fetchall(), [(i, i * 10) for i in range(25)])
-
-    def test_execute_values_unicode(self):
-        cur = self.conn.cursor()
-        ext.register_type(ext.UNICODE, cur)
-        snowman = u"\u2603"
-
-        # unicode in statement
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, data) values %%s -- %s" % snowman,
-            [(1, 'x')])
-        cur.execute("select id, data from testfast where id = 1")
-        self.assertEqual(cur.fetchone(), (1, 'x'))
-
-        # unicode in data
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, data) values %s",
-            [(2, snowman)])
-        cur.execute("select id, data from testfast where id = 2")
-        self.assertEqual(cur.fetchone(), (2, snowman))
-
-        # unicode in both
-        psycopg2.extras.execute_values(cur,
-            "insert into testfast (id, data) values %%s -- %s" % snowman,
-            [(3, snowman)])
-        cur.execute("select id, data from testfast where id = 3")
-        self.assertEqual(cur.fetchone(), (3, snowman))
 
 
 def test_suite():

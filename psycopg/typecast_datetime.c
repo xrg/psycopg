@@ -80,91 +80,152 @@ typecast_PYDATE_cast(const char *str, Py_ssize_t len, PyObject *curs)
     return obj;
 }
 
-/** DATETIME - cast a timestamp into a datetime python object **/
+/* convert the strings -infinity and infinity into a datetime with timezone */
+static PyObject *
+_parse_inftz(const char *str, PyObject *curs)
+{
+    PyObject *rv = NULL;
+    PyObject *m = NULL;
+    PyObject *tzinfo_factory = NULL;
+    PyObject *tzinfo = NULL;
+    PyObject *args = NULL;
+    PyObject *kwargs = NULL;
+    PyObject *replace = NULL;
+
+    if (!(m = PyObject_GetAttrString(
+            (PyObject*)PyDateTimeAPI->DateTimeType,
+            (str[0] == '-' ? "min" : "max")))) {
+        goto exit;
+    }
+
+    tzinfo_factory = ((cursorObject *)curs)->tzinfo_factory;
+    if (tzinfo_factory == Py_None) {
+        rv = m;
+        m = NULL;
+        goto exit;
+    }
+
+    if (!(tzinfo = PyObject_CallFunction(tzinfo_factory, "i", 0))) {
+        goto exit;
+    }
+
+    /* m.replace(tzinfo=tzinfo) */
+    if (!(args = PyTuple_New(0))) { goto exit; }
+    if (!(kwargs = PyDict_New())) { goto exit; }
+    if (0 != PyDict_SetItemString(kwargs, "tzinfo", tzinfo)) { goto exit; }
+    if (!(replace = PyObject_GetAttrString(m, "replace"))) { goto exit; }
+    rv = PyObject_Call(replace, args, kwargs);
+
+exit:
+    Py_XDECREF(replace);
+    Py_XDECREF(args);
+    Py_XDECREF(kwargs);
+    Py_XDECREF(tzinfo);
+    Py_XDECREF(m);
+
+    return rv;
+}
 
 static PyObject *
-typecast_PYDATETIME_cast(const char *str, Py_ssize_t len, PyObject *curs)
+_parse_noninftz(const char *str, Py_ssize_t len, PyObject *curs)
 {
-    PyObject* obj = NULL;
+    PyObject* rv = NULL;
     PyObject *tzinfo = NULL;
     PyObject *tzinfo_factory;
     int n, y=0, m=0, d=0;
     int hh=0, mm=0, ss=0, us=0, tz=0;
     const char *tp = NULL;
 
+    Dprintf("typecast_PYDATETIMETZ_cast: s = %s", str);
+    n = typecast_parse_date(str, &tp, &len, &y, &m, &d);
+    Dprintf("typecast_PYDATE_cast: tp = %p "
+            "n = %d, len = " FORMAT_CODE_PY_SSIZE_T ","
+            " y = %d, m = %d, d = %d",
+             tp, n, len, y, m, d);
+    if (n != 3) {
+        PyErr_SetString(DataError, "unable to parse date");
+        goto exit;
+    }
+
+    if (len > 0) {
+        n = typecast_parse_time(tp, NULL, &len, &hh, &mm, &ss, &us, &tz);
+        Dprintf("typecast_PYDATETIMETZ_cast: n = %d,"
+            " len = " FORMAT_CODE_PY_SSIZE_T ","
+            " hh = %d, mm = %d, ss = %d, us = %d, tz = %d",
+            n, len, hh, mm, ss, us, tz);
+        if (n < 3 || n > 6) {
+            PyErr_SetString(DataError, "unable to parse time");
+            goto exit;
+        }
+    }
+
+    if (ss > 59) {
+        mm += 1;
+        ss -= 60;
+    }
+    if (y > 9999)
+        y = 9999;
+
+    tzinfo_factory = ((cursorObject *)curs)->tzinfo_factory;
+    if (n >= 5 && tzinfo_factory != Py_None) {
+        /* we have a time zone, calculate minutes and create
+           appropriate tzinfo object calling the factory */
+        Dprintf("typecast_PYDATETIMETZ_cast: UTC offset = %ds", tz);
+
+        /* The datetime module requires that time zone offsets be
+           a whole number of minutes, so truncate the seconds to the
+           closest minute. */
+        // printf("%d %d %d\n", tz, tzmin, round(tz / 60.0));
+        if (!(tzinfo = PyObject_CallFunction(tzinfo_factory, "i",
+                (int)round(tz / 60.0)))) {
+            goto exit;
+        }
+    } else {
+        Py_INCREF(Py_None);
+        tzinfo = Py_None;
+    }
+
+    Dprintf("typecast_PYDATETIMETZ_cast: tzinfo: %p, refcnt = "
+        FORMAT_CODE_PY_SSIZE_T,
+        tzinfo, Py_REFCNT(tzinfo));
+    rv = PyObject_CallFunction(
+        (PyObject*)PyDateTimeAPI->DateTimeType, "iiiiiiiO",
+        y, m, d, hh, mm, ss, us, tzinfo);
+
+exit:
+    Py_XDECREF(tzinfo);
+    return rv;
+}
+
+/** DATETIME - cast a timestamp into a datetime python object **/
+
+static PyObject *
+typecast_PYDATETIME_cast(const char *str, Py_ssize_t len, PyObject *curs)
+{
     if (str == NULL) { Py_RETURN_NONE; }
 
     /* check for infinity */
     if (!strcmp(str, "infinity") || !strcmp(str, "-infinity")) {
-        if (str[0] == '-') {
-            obj = PyObject_GetAttrString(
-                (PyObject*)PyDateTimeAPI->DateTimeType, "min");
-        }
-        else {
-            obj = PyObject_GetAttrString(
-                (PyObject*)PyDateTimeAPI->DateTimeType, "max");
-        }
+        return PyObject_GetAttrString(
+            (PyObject*)PyDateTimeAPI->DateTimeType,
+            (str[0] == '-' ? "min" : "max"));
     }
 
-    else {
-        Dprintf("typecast_PYDATETIME_cast: s = %s", str);
-        n = typecast_parse_date(str, &tp, &len, &y, &m, &d);
-        Dprintf("typecast_PYDATE_cast: tp = %p "
-                "n = %d, len = " FORMAT_CODE_PY_SSIZE_T ","
-                " y = %d, m = %d, d = %d",
-                 tp, n, len, y, m, d);
-        if (n != 3) {
-            PyErr_SetString(DataError, "unable to parse date");
-            return NULL;
-        }
+    return _parse_noninftz(str, len, curs);
+}
 
-        if (len > 0) {
-            n = typecast_parse_time(tp, NULL, &len, &hh, &mm, &ss, &us, &tz);
-            Dprintf("typecast_PYDATETIME_cast: n = %d,"
-                " len = " FORMAT_CODE_PY_SSIZE_T ","
-                " hh = %d, mm = %d, ss = %d, us = %d, tz = %d",
-                n, len, hh, mm, ss, us, tz);
-            if (n < 3 || n > 6) {
-                PyErr_SetString(DataError, "unable to parse time");
-                return NULL;
-            }
-        }
+/** DATETIMETZ - cast a timestamptz into a datetime python object **/
 
-        if (ss > 59) {
-            mm += 1;
-            ss -= 60;
-        }
-        if (y > 9999)
-            y = 9999;
+static PyObject *
+typecast_PYDATETIMETZ_cast(const char *str, Py_ssize_t len, PyObject *curs)
+{
+    if (str == NULL) { Py_RETURN_NONE; }
 
-        tzinfo_factory = ((cursorObject *)curs)->tzinfo_factory;
-        if (n >= 5 && tzinfo_factory != Py_None) {
-            /* we have a time zone, calculate minutes and create
-               appropriate tzinfo object calling the factory */
-            Dprintf("typecast_PYDATETIME_cast: UTC offset = %ds", tz);
-
-            /* The datetime module requires that time zone offsets be
-               a whole number of minutes, so truncate the seconds to the
-               closest minute. */
-            // printf("%d %d %d\n", tz, tzmin, round(tz / 60.0));
-            tzinfo = PyObject_CallFunction(tzinfo_factory, "i",
-                (int)round(tz / 60.0));
-        } else {
-            Py_INCREF(Py_None);
-            tzinfo = Py_None;
-        }
-        if (tzinfo != NULL) {
-            obj = PyObject_CallFunction(
-                (PyObject*)PyDateTimeAPI->DateTimeType, "iiiiiiiO",
-                y, m, d, hh, mm, ss, us, tzinfo);
-            Dprintf("typecast_PYDATETIME_cast: tzinfo: %p, refcnt = "
-                FORMAT_CODE_PY_SSIZE_T,
-                tzinfo, Py_REFCNT(tzinfo)
-              );
-            Py_DECREF(tzinfo);
-        }
+    if (!strcmp(str, "infinity") || !strcmp(str, "-infinity")) {
+        return _parse_inftz(str, curs);
     }
-    return obj;
+
+    return _parse_noninftz(str, len, curs);
 }
 
 /** TIME - parse time into a time object **/
@@ -215,16 +276,52 @@ typecast_PYTIME_cast(const char *str, Py_ssize_t len, PyObject *curs)
     return obj;
 }
 
+
+/* Attempt parsing a number as microseconds
+ * Redshift is reported returning this stuff, see #558
+ *
+ * Return a new `timedelta()` object in case of success or NULL and set an error
+ */
+static PyObject *
+interval_from_usecs(const char *str)
+{
+    PyObject *us = NULL;
+    char *pend;
+    PyObject *rv = NULL;
+
+    Dprintf("interval_from_usecs: %s", str);
+
+    if (!(us = PyLong_FromString((char *)str, &pend, 0))) {
+        Dprintf("interval_from_usecs: parsing long failed");
+        goto exit;
+    }
+
+    if (*pend != '\0') {
+        /* there are trailing chars, it's not just micros. Barf. */
+        Dprintf("interval_from_usecs: spurious chars %s", pend);
+        PyErr_Format(PyExc_ValueError,
+            "expected number of microseconds, got %s", str);
+        goto exit;
+    }
+
+    rv = PyObject_CallFunction(
+        (PyObject*)PyDateTimeAPI->DeltaType, "iiO", 0, 0, us);
+
+exit:
+    Py_XDECREF(us);
+    return rv;
+}
+
+
 /** INTERVAL - parse an interval into a timedelta object **/
 
 static PyObject *
 typecast_PYINTERVAL_cast(const char *str, Py_ssize_t len, PyObject *curs)
 {
-    long years = 0, months = 0, days = 0;
-    double hours = 0.0, minutes = 0.0, seconds = 0.0, hundredths = 0.0;
-    double v = 0.0, sign = 1.0, denominator = 1.0;
-    int part = 0, sec;
-    double micro;
+    long v = 0, years = 0, months = 0, hours = 0, minutes = 0, micros = 0;
+    PY_LONG_LONG days = 0, seconds = 0;
+    int sign = 1, denom = 1, part = 0;
+    const char *orig = str;
 
     if (str == NULL) { Py_RETURN_NONE; }
 
@@ -234,56 +331,78 @@ typecast_PYINTERVAL_cast(const char *str, Py_ssize_t len, PyObject *curs)
         switch (*str) {
 
         case '-':
-            sign = -1.0;
+            sign = -1;
             break;
 
         case '0': case '1': case '2': case '3': case '4':
         case '5': case '6': case '7': case '8': case '9':
-            v = v * 10.0 + (double)(*str - '0');
-            if (part == 6){
-                denominator *= 10;
+            {
+                long v1;
+                v1 = v * 10 + (*str - '0');
+                /* detect either a rollover, happening if v is really too short,
+                 * or too big value. On Win where long == int the 2nd check
+                 * is useless. */
+                if (v1 < v || v1 > (long)INT_MAX) {
+                    /* uhm, oops... but before giving up, maybe it's redshift
+                     * returning microseconds? See #558 */
+                    PyObject *rv;
+                    if ((rv = interval_from_usecs(orig))) {
+                        return rv;
+                    }
+                    else {
+                        PyErr_Clear();
+                    }
+
+                    PyErr_SetString(
+                        PyExc_OverflowError, "interval component too big");
+                    return NULL;
+                }
+                v = v1;
+            }
+            if (part == 6) {
+                denom *= 10;
             }
             break;
 
         case 'y':
             if (part == 0) {
-                years = (long)(v*sign);
+                years = v * sign;
+                v = 0; sign = 1; part = 1;
                 str = skip_until_space2(str, &len);
-                v = 0.0; sign = 1.0; part = 1;
             }
             break;
 
         case 'm':
             if (part <= 1) {
-                months = (long)(v*sign);
+                months = v * sign;
+                v = 0; sign = 1; part = 2;
                 str = skip_until_space2(str, &len);
-                v = 0.0; sign = 1.0; part = 2;
             }
             break;
 
         case 'd':
             if (part <= 2) {
-                days = (long)(v*sign);
+                days = v * sign;
+                v = 0; sign = 1; part = 3;
                 str = skip_until_space2(str, &len);
-                v = 0.0; sign = 1.0; part = 3;
             }
             break;
 
         case ':':
             if (part <= 3) {
                 hours = v;
-                v = 0.0; part = 4;
+                v = 0; part = 4;
             }
             else if (part == 4) {
                 minutes = v;
-                v = 0.0; part = 5;
+                v = 0; part = 5;
             }
             break;
 
         case '.':
             if (part == 5) {
                 seconds = v;
-                v = 0.0; part = 6;
+                v = 0; part = 6;
             }
             break;
 
@@ -294,7 +413,7 @@ typecast_PYINTERVAL_cast(const char *str, Py_ssize_t len, PyObject *curs)
         str++;
     }
 
-    /* manage last value, be it minutes or seconds or hundredths of a second */
+    /* manage last value, be it minutes or seconds or microseconds */
     if (part == 4) {
         minutes = v;
     }
@@ -302,25 +421,34 @@ typecast_PYINTERVAL_cast(const char *str, Py_ssize_t len, PyObject *curs)
         seconds = v;
     }
     else if (part == 6) {
-        hundredths = v;
-        hundredths = hundredths/denominator;
+        micros = v;
+        if (denom < 1000000L) {
+            do {
+                micros *= 10;
+                denom *= 10;
+            } while (denom < 1000000L);
+        }
+        else if (denom > 1000000L) {
+            micros = (long)round((double)micros / denom * 1000000.0);
+        }
+    }
+    else if (part == 0) {
+        /* Parsing failed, maybe it's just an integer? Assume usecs */
+        return interval_from_usecs(orig);
     }
 
-    /* calculates seconds */
-    if (sign < 0.0) {
-        seconds = - (hundredths + seconds + minutes*60 + hours*3600);
-    }
-    else {
-        seconds += hundredths + minutes*60 + hours*3600;
+    /* add hour, minutes, seconds together and include the sign */
+    seconds += 60 * (PY_LONG_LONG)minutes + 3600 * (PY_LONG_LONG)hours;
+    if (sign < 0) {
+        seconds = -seconds;
+        micros = -micros;
     }
 
-    /* calculates days */
-    days += years*365 + months*30;
+    /* add the days, months years together - they already include a sign */
+    days += 30 * (PY_LONG_LONG)months + 365 * (PY_LONG_LONG)years;
 
-    micro = (seconds - floor(seconds)) * 1000000.0;
-    sec = (int)floor(seconds);
-    return PyObject_CallFunction((PyObject*)PyDateTimeAPI->DeltaType, "iii",
-                                 days, sec, (int)round(micro));
+    return PyObject_CallFunction((PyObject*)PyDateTimeAPI->DeltaType, "LLl",
+                                 days, seconds, micros);
 }
 
 /* psycopg defaults to using python datetime types */
@@ -330,4 +458,5 @@ typecast_PYINTERVAL_cast(const char *str, Py_ssize_t len, PyObject *curs)
 #define typecast_TIME_cast typecast_PYTIME_cast
 #define typecast_INTERVAL_cast typecast_PYINTERVAL_cast
 #define typecast_DATETIME_cast typecast_PYDATETIME_cast
+#define typecast_DATETIMETZ_cast typecast_PYDATETIMETZ_cast
 #endif

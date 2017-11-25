@@ -444,7 +444,7 @@ _psyco_bincurs_execute(cursorObject *self,
     _init_pargs(&pargs);
     pargs.nParams = 0;
 
-    operation = _psyco_curs_validate_sql_basic(self, operation);
+    operation = psyco_curs_validate_sql_basic(self, operation);
 
     /* Any failure from here forward should 'goto fail' rather than 'return 0'
        directly. */

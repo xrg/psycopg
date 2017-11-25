@@ -21,7 +21,7 @@ Psycopg 2 is both Unicode and Python 3 friendly.
 Documentation
 -------------
 
-Documentation is included in the 'doc' directory and is `available online`__.
+Documentation is included in the ``doc`` directory and is `available online`__.
 
 .. __: http://initd.org/psycopg/docs/
 
@@ -29,16 +29,21 @@ Documentation is included in the 'doc' directory and is `available online`__.
 Installation
 ------------
 
-If all the dependencies are met (i.e. you have the Python and libpq
-development packages installed in your system) the standard::
+If your ``pip`` version supports wheel_ packages it should be possible to
+install a binary version of Psycopg including all the dependencies from PyPI_.
+Just run::
 
-    python setup.py build
-    sudo python setup.py install
+    $ pip install -U pip      # make sure your pip is up-to-date
+    $ pip install psycopg2
 
-should work no problem.  In case you have any problem check the 'install' and
-the 'faq' documents in the docs or online__.
+If you want to build Psycopg from source you will need some prerequisites (a C
+compiler, development packages): please check the install_ and the faq_
+documents in the ``doc`` dir for the details.
 
-.. __: http://initd.org/psycopg/docs/install.html
+.. _wheel: http://pythonwheels.com/
+.. _PyPI: https://pypi.python.org/pypi/psycopg2
+.. _install: http://initd.org/psycopg/docs/install.html#install-from-source
+.. _faq: http://initd.org/psycopg/docs/faq.html#faq-compile
 
 For any other resource (source code repository, bug tracker, mailing list)
 please check the `project homepage`__.
@@ -46,6 +51,13 @@ please check the `project homepage`__.
 .. __: http://initd.org/psycopg/
 
 
-.. image:: https://travis-ci.org/psycopg/psycopg2.svg?branch=master
+:Linux/OSX: |travis|
+:Windows: |appveyor|
+
+.. |travis| image:: https://travis-ci.org/psycopg/psycopg2.svg?branch=master
     :target: https://travis-ci.org/psycopg/psycopg2
-    :alt: Build Status
+    :alt: Linux and OSX build status
+
+.. |appveyor| image:: https://ci.appveyor.com/api/projects/status/github/psycopg/psycopg2?branch=master&svg=true
+    :target: https://ci.appveyor.com/project/psycopg/psycopg2/branch/master
+    :alt: Windows build status

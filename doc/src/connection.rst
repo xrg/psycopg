@@ -343,6 +343,9 @@ The ``connection`` class
         Read-only string containing the connection string used by the
         connection.
 
+        If a password was specified in the connection string it will be
+        obscured.
+
 
     .. index::
         pair: Transaction; Autocommit
@@ -386,12 +389,6 @@ The ``connection`` class
 
         The function must be invoked with no transaction in progress.
 
-        .. note::
-
-            There is currently no builtin method to read the current value for
-            the parameters: use :sql:`SHOW default_transaction_...` to read
-            the values from the backend.
-
         .. seealso:: |SET TRANSACTION|_ for further details about the behaviour
             of the transaction parameters in the server.
 
@@ -399,6 +396,32 @@ The ``connection`` class
             .. _SET TRANSACTION: http://www.postgresql.org/docs/current/static/sql-set-transaction.html
 
         .. versionadded:: 2.4.2
+
+        .. versionchanged:: 2.7
+            Before this version, the function would have set
+            :sql:`default_transaction_*` attribute in the current session;
+            this implementation has the problem of not playing well with
+            external connection pooling working at transaction level and not
+            resetting the state of the session: changing the default
+            transaction would pollute the connections in the pool and create
+            problems to other applications using the same pool.
+
+            Starting from 2.7, if the connection is not autocommit, the
+            transaction characteristics are issued together with :sql:`BEGIN`
+            and will leave the :sql:`default_transaction_*` settings untouched.
+            For example::
+
+                conn.set_session(readonly=True)
+
+            will not change :sql:`default_transaction_read_only`, but
+            following transaction will start with a :sql:`BEGIN READ ONLY`.
+            Conversely, using::
+
+                conn.set_session(readonly=True, autocommit=True)
+
+            will set :sql:`default_transaction_read_only` to :sql:`on` and
+            rely on the server to apply the read only state to whatever
+            transaction, implicit or explicit, is executed in the connection.
 
 
     .. attribute:: autocommit
@@ -429,30 +452,82 @@ The ``connection`` class
 
 
     .. attribute:: isolation_level
+
+        Return or set the `transaction isolation level`_ for the current
+        session.  The value is one of the :ref:`isolation-level-constants`
+        defined in the `psycopg2.extensions` module.  On set it is also
+        possible to use one of the literal values ``READ UNCOMMITTED``, ``READ
+        COMMITTED``, ``REPEATABLE READ``, ``SERIALIZABLE``, ``DEFAULT``.
+
+        .. versionchanged:: 2.7
+
+            the property is writable.
+
+        .. versionchanged:: 2.7
+
+            the default value for `!isolation_level` is
+            `~psycopg2.extensions.ISOLATION_LEVEL_DEFAULT`; previously the
+            property would have queried the server and returned the real value
+            applied. To know this value you can run a query such as :sql:`show
+            transaction_isolation`. Usually the default value is `READ
+            COMMITTED`, but this may be changed in the server configuration.
+
+            This value is now entirely separate from the `autocommit`
+            property: in previous version, if `!autocommit` was set to `!True`
+            this property would have returned
+            `~psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT`; it will now
+            return the server isolation level.
+
+
+    .. attribute:: readonly
+
+        Return or set the read-only status for the current session. Available
+        values are `!True` (new transactions will be in read-only mode),
+        `!False` (new transactions will be writable), `!None` (use the default
+        configured for the server by :sql:`default_transaction_read_only`).
+
+        .. versionadded:: 2.7
+
+
+    .. attribute:: deferrable
+
+        Return or set the `deferrable status`__ for the current session.
+        Available values are `!True` (new transactions will be in deferrable
+        mode), `!False` (new transactions will be in non deferrable mode),
+        `!None` (use the default configured for the server by
+        :sql:`default_transaction_deferrable`).
+
+        .. __: `SET TRANSACTION`_
+
+        .. versionadded:: 2.7
+
+
     .. method:: set_isolation_level(level)
 
         .. note::
 
-            From version 2.4.2, `set_session()` and `autocommit`, offer
-            finer control on the transaction characteristics.
+            This is a legacy method mixing `~conn.isolation_level` and
+            `~conn.autocommit`. Using the respective properties is a better
+            option.
 
-        Read or set the `transaction isolation level`_ for the current session.
+        Set the `transaction isolation level`_ for the current session.
         The level defines the different phenomena that can happen in the
         database between concurrent transactions.
 
-        The value set or read is an integer: symbolic constants are defined in
+        The value set is an integer: symbolic constants are defined in
         the module `psycopg2.extensions`: see
         :ref:`isolation-level-constants` for the available values.
 
-        The default level is :sql:`READ COMMITTED`: at this level a
-        transaction is automatically started the first time a database command
-        is executed.  If you want an *autocommit* mode, switch to
-        `~psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT` before
+        The default level is `~psycopg2.extensions.ISOLATION_LEVEL_DEFAULT`:
+        at this level a transaction is automatically started the first time a
+        database command is executed.  If you want an *autocommit* mode,
+        switch to `~psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT` before
         executing any command::
 
             >>> conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
 
         See also :ref:`transactions-control`.
+
 
     .. index::
         pair: Client; Encoding
@@ -706,8 +781,12 @@ The ``connection`` class
 
 
     .. attribute:: async
+                   async_
 
         Read only attribute: 1 if the connection is asynchronous, 0 otherwise.
+
+        .. versionchanged:: 2.7 added the `!async_` alias for Python versions
+            where `!async` is a keyword.
 
 
     .. method:: poll()

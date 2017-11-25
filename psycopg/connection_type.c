@@ -36,6 +36,9 @@
 #include <string.h>
 #include <ctype.h>
 
+extern HIDDEN const char *srv_isolevels[];
+extern HIDDEN const char *srv_readonly[];
+extern HIDDEN const char *srv_deferrable[];
 
 /** DBAPI methods **/
 
@@ -444,18 +447,23 @@ exit:
 
 /* parse a python object into one of the possible isolation level values */
 
-extern const IsolationLevel conn_isolevels[];
-
-static const char *
-_psyco_conn_parse_isolevel(connectionObject *self, PyObject *pyval)
+RAISES_NEG static int
+_psyco_conn_parse_isolevel(PyObject *pyval)
 {
-    const IsolationLevel *isolevel = NULL;
+    int rv = -1;
+    long level;
 
     Py_INCREF(pyval);   /* for ensure_bytes */
 
+    /* None is default. This is only used when setting the property, because
+     * set_session() has None used as "don't change" */
+    if (pyval == Py_None) {
+        rv = ISOLATION_LEVEL_DEFAULT;
+    }
+
     /* parse from one of the level constants */
-    if (PyInt_Check(pyval)) {
-        long level = PyInt_AsLong(pyval);
+    else if (PyInt_Check(pyval)) {
+        level = PyInt_AsLong(pyval);
         if (level == -1 && PyErr_Occurred()) { goto exit; }
         if (level < 1 || level > 4) {
             PyErr_SetString(PyExc_ValueError,
@@ -463,64 +471,81 @@ _psyco_conn_parse_isolevel(connectionObject *self, PyObject *pyval)
             goto exit;
         }
 
-        isolevel = conn_isolevels;
-        while ((++isolevel)->value != level)
-            ; /* continue */
+        rv = level;
     }
 
     /* parse from the string -- this includes "default" */
     else {
-        isolevel = conn_isolevels;
-        while ((++isolevel)->name) {
-            if (!(pyval = psycopg_ensure_bytes(pyval))) {
-                goto exit;
-            }
-            if (0 == strcasecmp(isolevel->name, Bytes_AS_STRING(pyval))) {
+        if (!(pyval = psycopg_ensure_bytes(pyval))) {
+            goto exit;
+        }
+        for (level = 1; level <= 4; level++) {
+            if (0 == strcasecmp(srv_isolevels[level], Bytes_AS_STRING(pyval))) {
+                rv = level;
                 break;
             }
         }
-        if (!isolevel->name) {
-            char msg[256];
-            snprintf(msg, sizeof(msg),
-                "bad value for isolation_level: '%s'", Bytes_AS_STRING(pyval));
-            PyErr_SetString(PyExc_ValueError, msg);
+        if (rv < 0 && 0 == strcasecmp("default", Bytes_AS_STRING(pyval))) {
+            rv = ISOLATION_LEVEL_DEFAULT;
         }
-    }
-
-    /* use only supported levels on older PG versions */
-    if (isolevel && self->server_version < 80000) {
-        if (isolevel->value == ISOLATION_LEVEL_READ_UNCOMMITTED
-            || isolevel->value == ISOLATION_LEVEL_REPEATABLE_READ) {
-            ++isolevel;
+        if (rv < 0) {
+            PyErr_Format(PyExc_ValueError,
+                "bad value for isolation_level: '%s'", Bytes_AS_STRING(pyval));
+            goto exit;
         }
     }
 
 exit:
     Py_XDECREF(pyval);
 
-    return isolevel ? isolevel->name : NULL;
+    return rv;
 }
 
-/* convert True/False/"default" into a C string */
+/* convert False/True/"default" -> 0/1/2 */
 
-static const char *
+RAISES_NEG static int
 _psyco_conn_parse_onoff(PyObject *pyval)
 {
-    int istrue = PyObject_IsTrue(pyval);
-    if (-1 == istrue) { return NULL; }
-    if (istrue) {
-        int cmp;
-        PyObject *pydef;
-        if (!(pydef = Text_FromUTF8("default"))) { return NULL; }
-        cmp = PyObject_RichCompareBool(pyval, pydef, Py_EQ);
-        Py_DECREF(pydef);
-        if (-1 == cmp) { return NULL; }
-        return cmp ? "default" : "on";
+    int rv = -1;
+
+    Py_INCREF(pyval);   /* for ensure_bytes */
+
+    if (pyval == Py_None) {
+        rv = STATE_DEFAULT;
+    }
+    else if (PyUnicode_CheckExact(pyval) || Bytes_CheckExact(pyval)) {
+        if (!(pyval = psycopg_ensure_bytes(pyval))) {
+            goto exit;
+        }
+        if (0 == strcasecmp("default", Bytes_AS_STRING(pyval))) {
+            rv = STATE_DEFAULT;
+        }
+        else {
+            PyErr_Format(PyExc_ValueError,
+                "the only string accepted is 'default'; got %s",
+                Bytes_AS_STRING(pyval));
+            goto exit;
+        }
     }
     else {
-        return "off";
+        int istrue;
+        if (0 > (istrue = PyObject_IsTrue(pyval))) { goto exit; }
+        rv = istrue ? STATE_ON : STATE_OFF;
     }
+
+exit:
+    Py_XDECREF(pyval);
+
+    return rv;
 }
+
+#define _set_session_checks(self,what) \
+do { \
+    EXC_IF_CONN_CLOSED(self); \
+    EXC_IF_CONN_ASYNC(self, what); \
+    EXC_IF_IN_TRANSACTION(self, what); \
+    EXC_IF_TPC_PREPARED(self, what); \
+} while(0)
 
 /* set_session - set default transaction characteristics */
 
@@ -536,17 +561,15 @@ psyco_conn_set_session(connectionObject *self, PyObject *args, PyObject *kwargs)
     PyObject *deferrable = Py_None;
     PyObject *autocommit = Py_None;
 
-    const char *c_isolevel = NULL;
-    const char *c_readonly = NULL;
-    const char *c_deferrable = NULL;
+    int c_isolevel = self->isolevel;
+    int c_readonly = self->readonly;
+    int c_deferrable = self->deferrable;
     int c_autocommit = self->autocommit;
 
     static char *kwlist[] =
         {"isolation_level", "readonly", "deferrable", "autocommit", NULL};
 
-    EXC_IF_CONN_CLOSED(self);
-    EXC_IF_CONN_ASYNC(self, set_session);
-    EXC_IF_IN_TRANSACTION(self, set_session);
+    _set_session_checks(self, set_session);
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs, "|OOOO", kwlist,
             &isolevel, &readonly, &deferrable, &autocommit)) {
@@ -554,40 +577,36 @@ psyco_conn_set_session(connectionObject *self, PyObject *args, PyObject *kwargs)
     }
 
     if (Py_None != isolevel) {
-        if (!(c_isolevel = _psyco_conn_parse_isolevel(self, isolevel))) {
+        if (0 > (c_isolevel = _psyco_conn_parse_isolevel(isolevel))) {
             return NULL;
         }
     }
 
     if (Py_None != readonly) {
-        if (!(c_readonly = _psyco_conn_parse_onoff(readonly))) {
+        if (0 > (c_readonly = _psyco_conn_parse_onoff(readonly))) {
             return NULL;
         }
     }
     if (Py_None != deferrable) {
-        if (self->server_version < 90100) {
-            PyErr_SetString(ProgrammingError,
-                "the 'deferrable' setting is only available"
-                " from PostgreSQL 9.1");
+        if (0 > (c_deferrable = _psyco_conn_parse_onoff(deferrable))) {
             return NULL;
         }
-        if (!(c_deferrable = _psyco_conn_parse_onoff(deferrable))) {
-            return NULL;
-        }
-    }
-    if (Py_None != autocommit) {
-        c_autocommit = PyObject_IsTrue(autocommit);
-        if (-1 == c_autocommit) { return NULL; }
     }
 
-    if (0 > conn_set_session(self,
-            c_isolevel, c_readonly, c_deferrable, c_autocommit)) {
+    if (Py_None != autocommit) {
+        if (-1 == (c_autocommit = PyObject_IsTrue(autocommit))) { return NULL; }
+    }
+
+    if (0 > conn_set_session(
+                self, c_autocommit, c_isolevel, c_readonly, c_deferrable)) {
         return NULL;
     }
 
     Py_RETURN_NONE;
 }
 
+
+/* autocommit - return or set the current autocommit status */
 
 #define psyco_conn_autocommit_doc \
 "Set or return the autocommit status."
@@ -602,13 +621,11 @@ psyco_conn_autocommit_get(connectionObject *self)
 }
 
 BORROWED static PyObject *
-_psyco_conn_autocommit_set_checks(connectionObject *self)
+_psyco_set_session_check_setter_wrapper(connectionObject *self)
 {
     /* wrapper to use the EXC_IF macros.
      * return NULL in case of error, else whatever */
-    EXC_IF_CONN_CLOSED(self);
-    EXC_IF_CONN_ASYNC(self, autocommit);
-    EXC_IF_IN_TRANSACTION(self, autocommit);
+    _set_session_checks(self, set_session);
     return Py_None;     /* borrowed */
 }
 
@@ -617,27 +634,46 @@ psyco_conn_autocommit_set(connectionObject *self, PyObject *pyvalue)
 {
     int value;
 
-    if (!_psyco_conn_autocommit_set_checks(self)) { return -1; }
+    if (!_psyco_set_session_check_setter_wrapper(self)) { return -1; }
     if (-1 == (value = PyObject_IsTrue(pyvalue))) { return -1; }
-    if (0 != conn_set_autocommit(self, value)) { return -1; }
+    if (0 > conn_set_session(self, value,
+                self->isolevel, self->readonly, self->deferrable)) {
+        return -1;
+    }
 
     return 0;
 }
 
 
-/* isolation_level - return the current isolation level */
+/* isolation_level - return or set the current isolation level */
+
+#define psyco_conn_isolation_level_doc \
+"Set or return the connection transaction isolation level."
 
 static PyObject *
 psyco_conn_isolation_level_get(connectionObject *self)
 {
-    int rv;
+    if (self->isolevel == ISOLATION_LEVEL_DEFAULT) {
+        Py_RETURN_NONE;
+    } else {
+        return PyInt_FromLong((long)self->isolevel);
+    }
+}
 
-    EXC_IF_CONN_CLOSED(self);
-    EXC_IF_TPC_PREPARED(self, set_isolation_level);
 
-    rv = conn_get_isolation_level(self);
-    if (-1 == rv) { return NULL; }
-    return PyInt_FromLong((long)rv);
+static int
+psyco_conn_isolation_level_set(connectionObject *self, PyObject *pyvalue)
+{
+    int value;
+
+    if (!_psyco_set_session_check_setter_wrapper(self)) { return -1; }
+    if (0 > (value = _psyco_conn_parse_isolevel(pyvalue))) { return -1; }
+    if (0 > conn_set_session(self, self->autocommit,
+                value, self->readonly, self->deferrable)) {
+        return -1;
+    }
+
+    return 0;
 }
 
 
@@ -650,25 +686,141 @@ static PyObject *
 psyco_conn_set_isolation_level(connectionObject *self, PyObject *args)
 {
     int level = 1;
+    PyObject *pyval = NULL;
 
     EXC_IF_CONN_CLOSED(self);
-    EXC_IF_CONN_ASYNC(self, set_isolation_level);
-    EXC_IF_TPC_PREPARED(self, set_isolation_level);
+    EXC_IF_CONN_ASYNC(self, "isolation_level");
+    EXC_IF_TPC_PREPARED(self, "isolation_level");
 
-    if (!PyArg_ParseTuple(args, "i", &level)) return NULL;
+    if (!PyArg_ParseTuple(args, "O", &pyval)) return NULL;
 
-    if (level < 0 || level > 4) {
-        PyErr_SetString(PyExc_ValueError,
-            "isolation level must be between 0 and 4");
+    if (pyval == Py_None) {
+        level = ISOLATION_LEVEL_DEFAULT;
+    }
+
+    /* parse from one of the level constants */
+    else if (PyInt_Check(pyval)) {
+        level = PyInt_AsLong(pyval);
+
+        if (level < 0 || level > 4) {
+            PyErr_SetString(PyExc_ValueError,
+                "isolation level must be between 0 and 4");
+            return NULL;
+        }
+    }
+
+    if (0 > conn_rollback(self)) {
         return NULL;
     }
 
-    if (conn_switch_isolation_level(self, level) < 0) {
-        return NULL;
+    if (level == 0) {
+        if (0 > conn_set_session(self, 1,
+                self->isolevel, self->readonly, self->deferrable)) {
+            return NULL;
+        }
+    }
+    else {
+        if (0 > conn_set_session(self, 0,
+                level, self->readonly, self->deferrable)) {
+            return NULL;
+        }
     }
 
     Py_RETURN_NONE;
 }
+
+
+/* readonly - return or set the current read-only status */
+
+#define psyco_conn_readonly_doc \
+"Set or return the connection read-only status."
+
+static PyObject *
+psyco_conn_readonly_get(connectionObject *self)
+{
+    PyObject *rv = NULL;
+
+    switch (self->readonly) {
+        case STATE_OFF:
+            rv = Py_False;
+            break;
+        case STATE_ON:
+            rv = Py_True;
+            break;
+        case STATE_DEFAULT:
+            rv = Py_None;
+            break;
+        default:
+            PyErr_Format(InternalError,
+                "bad internal value for readonly: %d", self->readonly);
+            break;
+    }
+
+    return rv;
+}
+
+
+static int
+psyco_conn_readonly_set(connectionObject *self, PyObject *pyvalue)
+{
+    int value;
+
+    if (!_psyco_set_session_check_setter_wrapper(self)) { return -1; }
+    if (0 > (value = _psyco_conn_parse_onoff(pyvalue))) { return -1; }
+    if (0 > conn_set_session(self, self->autocommit,
+                self->isolevel, value, self->deferrable)) {
+        return -1;
+    }
+
+    return 0;
+}
+
+
+/* deferrable - return or set the current deferrable status */
+
+#define psyco_conn_deferrable_doc \
+"Set or return the connection deferrable status."
+
+static PyObject *
+psyco_conn_deferrable_get(connectionObject *self)
+{
+    PyObject *rv = NULL;
+
+    switch (self->deferrable) {
+        case STATE_OFF:
+            rv = Py_False;
+            break;
+        case STATE_ON:
+            rv = Py_True;
+            break;
+        case STATE_DEFAULT:
+            rv = Py_None;
+            break;
+        default:
+            PyErr_Format(InternalError,
+                "bad internal value for deferrable: %d", self->deferrable);
+            break;
+    }
+
+    return rv;
+}
+
+
+static int
+psyco_conn_deferrable_set(connectionObject *self, PyObject *pyvalue)
+{
+    int value;
+
+    if (!_psyco_set_session_check_setter_wrapper(self)) { return -1; }
+    if (0 > (value = _psyco_conn_parse_onoff(pyvalue))) { return -1; }
+    if (0 > conn_set_session(self, self->autocommit,
+                self->isolevel, self->readonly, value)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 
 /* set_client_encoding method - set client encoding */
 
@@ -786,7 +938,7 @@ psyco_conn_lobject(connectionObject *self, PyObject *args, PyObject *keywds)
     PyObject *obj;
 
     static char *kwlist[] = {"oid", "mode", "new_oid", "new_file",
-                             "cursor_factory", NULL};
+                             "lobject_factory", NULL};
 
     if (!PyArg_ParseTupleAndKeywords(args, keywds, "|IzIzO", kwlist,
                                      &oid, &smode, &new_oid, &new_file,
@@ -1040,6 +1192,8 @@ static struct PyMemberDef connectionObject_members[] = {
         "The current connection string."},
     {"async", T_LONG, offsetof(connectionObject, async), READONLY,
         "True if the connection is asynchronous."},
+    {"async_", T_LONG, offsetof(connectionObject, async), READONLY,
+        "True if the connection is asynchronous."},
     {"status", T_INT,
         offsetof(connectionObject, status), READONLY,
         "The current transaction status."},
@@ -1078,18 +1232,74 @@ static struct PyGetSetDef connectionObject_getsets[] = {
         psyco_conn_autocommit_doc },
     { "isolation_level",
         (getter)psyco_conn_isolation_level_get,
-        (setter)NULL,
-        "The current isolation level." },
+        (setter)psyco_conn_isolation_level_set,
+        psyco_conn_isolation_level_doc },
+    { "readonly",
+        (getter)psyco_conn_readonly_get,
+        (setter)psyco_conn_readonly_set,
+        psyco_conn_readonly_doc },
+    { "deferrable",
+        (getter)psyco_conn_deferrable_get,
+        (setter)psyco_conn_deferrable_set,
+        psyco_conn_deferrable_doc },
     {NULL}
 };
 #undef EXCEPTION_GETTER
 
 /* initialization and finalization methods */
 
+RAISES_NEG static int
+obscure_password(connectionObject *conn)
+{
+    PQconninfoOption *options;
+    PyObject *d = NULL, *v = NULL, *dsn = NULL;
+    char *tmp;
+    int rv = -1;
+
+    if (!conn || !conn->dsn) {
+        return 0;
+    }
+
+    if (!(options = PQconninfoParse(conn->dsn, NULL))) {
+        /* unlikely: the dsn was already tested valid */
+        return 0;
+    }
+
+    if (!(d = psycopg_dict_from_conninfo_options(
+            options, /* include_password = */ 1))) {
+        goto exit;
+    }
+    if (NULL == PyDict_GetItemString(d, "password")) {
+        /* the dsn doesn't have a password */
+        rv = 0;
+        goto exit;
+    }
+
+    /* scrub the password and put back the connection string together */
+    if (!(v = Text_FromUTF8("xxx"))) { goto exit; }
+    if (0 > PyDict_SetItemString(d, "password", v)) { goto exit; }
+    if (!(dsn = psycopg_make_dsn(Py_None, d))) { goto exit; }
+    if (!(dsn = psycopg_ensure_bytes(dsn))) { goto exit; }
+
+    /* Replace the connection string on the connection object */
+    tmp = conn->dsn;
+    psycopg_strdup(&conn->dsn, Bytes_AS_STRING(dsn), -1);
+    PyMem_Free(tmp);
+
+    rv = 0;
+
+exit:
+    PQconninfoFree(options);
+    Py_XDECREF(v);
+    Py_XDECREF(d);
+    Py_XDECREF(dsn);
+
+    return rv;
+}
+
 static int
 connection_setup(connectionObject *self, const char *dsn, long int async)
 {
-    char *pos;
     int res = -1;
 
     Dprintf("connection_setup: init connection object at %p, "
@@ -1105,6 +1315,9 @@ connection_setup(connectionObject *self, const char *dsn, long int async)
     self->async_status = ASYNC_DONE;
     if (!(self->string_types = PyDict_New())) { goto exit; }
     if (!(self->binary_types = PyDict_New())) { goto exit; }
+    self->isolevel = ISOLATION_LEVEL_DEFAULT;
+    self->readonly = STATE_DEFAULT;
+    self->deferrable = STATE_DEFAULT;
     /* other fields have been zeroed by tp_alloc */
 
     pthread_mutex_init(&(self->lock), NULL);
@@ -1123,14 +1336,15 @@ connection_setup(connectionObject *self, const char *dsn, long int async)
 
 exit:
     /* here we obfuscate the password even if there was a connection error */
-    pos = strstr(self->dsn, "password");
-    if (pos != NULL) {
-        for (pos = pos+9 ; *pos != '\0' && *pos != ' '; pos++)
-            *pos = 'x';
+    {
+        PyObject *ptype = NULL, *pvalue = NULL, *ptb = NULL;
+        PyErr_Fetch(&ptype, &pvalue, &ptb);
+        obscure_password(self);
+        PyErr_Restore(ptype, pvalue, ptb);
     }
-
     return res;
 }
+
 
 static int
 connection_clear(connectionObject *self)
@@ -1186,12 +1400,14 @@ static int
 connection_init(PyObject *obj, PyObject *args, PyObject *kwds)
 {
     const char *dsn;
-    long int async = 0;
-    static char *kwlist[] = {"dsn", "async", NULL};
+    long int async = 0, async_ = 0;
+    static char *kwlist[] = {"dsn", "async", "async_", NULL};
 
-    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|l", kwlist, &dsn, &async))
+    if (!PyArg_ParseTupleAndKeywords(args, kwds, "s|ll", kwlist,
+            &dsn, &async, &async_))
         return -1;
 
+    if (async_) { async = async_; }
     return connection_setup((connectionObject *)obj, dsn, async);
 }
 

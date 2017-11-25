@@ -132,9 +132,10 @@ query:
     >>> cur.execute("INSERT INTO foo VALUES (%s)", ("bar",)) # correct
     >>> cur.execute("INSERT INTO foo VALUES (%s)", ["bar"])  # correct
 
-- Only variable values should be bound via this method: it shouldn't be used
-  to set table or field names. For these elements, ordinary string formatting
-  should be used before running `~cursor.execute()`.
+- Only query values should be bound via this method: it shouldn't be used to
+  merge table or field names to the query. If you need to generate dynamically
+  an SQL query (for instance choosing dynamically a table name) you can use
+  the facilities provided by the `psycopg2.sql` module.
 
 
 
@@ -675,8 +676,7 @@ commands executed will be immediately committed and no rollback is possible. A
 few commands (e.g. :sql:`CREATE DATABASE`, :sql:`VACUUM`...) require to be run
 outside any transaction: in order to be able to run these commands from
 Psycopg, the connection must be in autocommit mode: you can use the
-`~connection.autocommit` property (`~connection.set_isolation_level()` in
-older versions).
+`~connection.autocommit` property.
 
 .. warning::
 
@@ -776,8 +776,8 @@ you may decrease this value if you are dealing with huge records.
 
 Named cursors are usually created :sql:`WITHOUT HOLD`, meaning they live only
 as long as the current transaction. Trying to fetch from a named cursor after
-a `~connection.commit()` or to create a named cursor when the `connection`
-transaction isolation level is set to `AUTOCOMMIT` will result in an exception.
+a `~connection.commit()` or to create a named cursor when the connection
+is in `~connection.autocommit` mode will result in an exception.
 It is possible to create a :sql:`WITH HOLD` cursor by specifying a `!True`
 value for the `withhold` parameter to `~connection.cursor()` or by setting the
 `~cursor.withhold` attribute to `!True` before calling `~cursor.execute()` on
@@ -870,7 +870,7 @@ PostgreSQL |COPY|__ command to move data from files to tables and back.
 
 Currently no adaptation is provided between Python and PostgreSQL types on
 |COPY|: the file can be any Python file-like object but its format must be in
-the format accepted by `PostgreSQL COPY command`__ (data fromat, escaped
+the format accepted by `PostgreSQL COPY command`__ (data format, escaped
 characters, etc).
 
 .. __: COPY_

@@ -50,17 +50,21 @@ else:
         # workaround subclass for ticket #153
         pass
 
-    sys.path.insert(0, 'scripts')
+    # Configure distutils to run our custom 2to3 fixers as well
+    from lib2to3.refactor import get_fixers_from_package
+    build_py.fixer_names = [f for f in get_fixers_from_package('lib2to3.fixes')
+        # creates a pending deprecation warning on py 3.4
+        if not f.endswith('.fix_reload')]
 
 try:
     import configparser
 except ImportError:
     import ConfigParser as configparser
 
-# Take a look at http://www.python.org/dev/peps/pep-0386/
+# Take a look at http://www.python.org/dev/peps/pep-0440/
 # for a consistent versioning pattern.
 
-PSYCOPG_VERSION = '2.7.dev0'
+PSYCOPG_VERSION = '2.7.3.2'
 
 
 # note: if you are changing the list of supported Python version please fix
@@ -74,7 +78,6 @@ Programming Language :: Python
 Programming Language :: Python :: 2.6
 Programming Language :: Python :: 2.7
 Programming Language :: Python :: 3
-Programming Language :: Python :: 3.1
 Programming Language :: Python :: 3.2
 Programming Language :: Python :: 3.3
 Programming Language :: Python :: 3.4
@@ -292,7 +295,7 @@ class psycopg_build_ext(build_ext):
 
         # For Python versions that use MSVC compiler 2008, re-insert the
         # manifest into the resulting .pyd file.
-        if self.compiler_is_msvc() and sysVer not in ((2, 4), (2, 5)):
+        if self.compiler_is_msvc() and sysVer in ((2, 6), (2, 7), (3, 0), (3, 1), (3, 2)):
             platform = get_platform()
             # Default to the x86 manifest
             manifest = '_psycopg.vc9.x86.manifest'
@@ -414,10 +417,12 @@ class psycopg_build_ext(build_ext):
                 pgversion = "7.4.0"
 
             verre = re.compile(
-                r"(\d+)\.(\d+)(?:(?:\.(\d+))|(devel|(alpha|beta|rc)\d+))")
+                r"(\d+)(?:\.(\d+))?(?:(?:\.(\d+))|(devel|(?:alpha|beta|rc)\d+))?")
             m = verre.match(pgversion)
             if m:
                 pgmajor, pgminor, pgpatch = m.group(1, 2, 3)
+                if pgminor is None or not pgminor.isdigit():
+                    pgminor = 0
                 if pgpatch is None or not pgpatch.isdigit():
                     pgpatch = 0
                 pgmajor = int(pgmajor)
@@ -525,9 +530,10 @@ have_mxdatetime = False
 use_pydatetime = int(parser.get('build_ext', 'use_pydatetime'))
 
 # check for mx package
+mxincludedir = ''
 if parser.has_option('build_ext', 'mx_include_dir'):
     mxincludedir = parser.get('build_ext', 'mx_include_dir')
-else:
+if not mxincludedir:
     mxincludedir = os.path.join(get_python_inc(plat_specific=1), "mx")
 if mxincludedir.strip() and os.path.exists(mxincludedir):
     # Build the support for mx: we will check at runtime if it can be imported
@@ -606,7 +612,8 @@ ext.append(Extension("psycopg2._psycopg", sources,
 # using these pretty metadata. But that's their problem, not ours.
 download_url = (
     "http://initd.org/psycopg/tarballs/PSYCOPG-%s/psycopg2-%s.tar.gz"
-    % ('-'.join(PSYCOPG_VERSION.split('.')[:2]), PSYCOPG_VERSION))
+    % (re.sub(r'^(\d+)\.(\d+).*', r'\1-\2', PSYCOPG_VERSION),
+        PSYCOPG_VERSION))
 
 try:
     f = open("README.rst")

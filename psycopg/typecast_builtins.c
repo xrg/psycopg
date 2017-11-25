@@ -6,7 +6,8 @@ static long int typecast_DECIMAL_types[] = {1700, 0};
 static long int typecast_UNICODE_types[] = {19, 18, 25, 1042, 1043, 0};
 static long int typecast_STRING_types[] = {19, 18, 25, 1042, 1043, 0};
 static long int typecast_BOOLEAN_types[] = {16, 0};
-static long int typecast_DATETIME_types[] = {1114, 1184, 704, 1186, 0};
+static long int typecast_DATETIME_types[] = {1114, 0};
+static long int typecast_DATETIMETZ_types[] = {1184, 0};
 static long int typecast_TIME_types[] = {1083, 1266, 0};
 static long int typecast_DATE_types[] = {1082, 0};
 static long int typecast_INTERVAL_types[] = {704, 1186, 0};
@@ -19,7 +20,8 @@ static long int typecast_DECIMALARRAY_types[] = {1231, 0};
 static long int typecast_UNICODEARRAY_types[] = {1002, 1003, 1009, 1014, 1015, 0};
 static long int typecast_STRINGARRAY_types[] = {1002, 1003, 1009, 1014, 1015, 0};
 static long int typecast_BOOLEANARRAY_types[] = {1000, 0};
-static long int typecast_DATETIMEARRAY_types[] = {1115, 1185, 0};
+static long int typecast_DATETIMEARRAY_types[] = {1115, 0};
+static long int typecast_DATETIMETZARRAY_types[] = {1185, 0};
 static long int typecast_TIMEARRAY_types[] = {1183, 1270, 0};
 static long int typecast_DATEARRAY_types[] = {1182, 0};
 static long int typecast_INTERVALARRAY_types[] = {1187, 0};
@@ -41,6 +43,7 @@ static typecastObject_initlist typecast_builtins[] = {
   {"STRING", typecast_STRING_types, typecast_STRING_cast, NULL},
   {"BOOLEAN", typecast_BOOLEAN_types, typecast_BOOLEAN_cast, NULL},
   {"DATETIME", typecast_DATETIME_types, typecast_DATETIME_cast, NULL},
+  {"DATETIMETZ", typecast_DATETIMETZ_types, typecast_DATETIMETZ_cast, NULL},
   {"TIME", typecast_TIME_types, typecast_TIME_cast, NULL},
   {"DATE", typecast_DATE_types, typecast_DATE_cast, NULL},
   {"INTERVAL", typecast_INTERVAL_types, typecast_INTERVAL_cast, NULL},
@@ -54,6 +57,7 @@ static typecastObject_initlist typecast_builtins[] = {
   {"STRINGARRAY", typecast_STRINGARRAY_types, typecast_STRINGARRAY_cast, "STRING"},
   {"BOOLEANARRAY", typecast_BOOLEANARRAY_types, typecast_BOOLEANARRAY_cast, "BOOLEAN"},
   {"DATETIMEARRAY", typecast_DATETIMEARRAY_types, typecast_DATETIMEARRAY_cast, "DATETIME"},
+  {"DATETIMETZARRAY", typecast_DATETIMETZARRAY_types, typecast_DATETIMETZARRAY_cast, "DATETIMETZ"},
   {"TIMEARRAY", typecast_TIMEARRAY_types, typecast_TIMEARRAY_cast, "TIME"},
   {"DATEARRAY", typecast_DATEARRAY_types, typecast_DATEARRAY_cast, "DATE"},
   {"INTERVALARRAY", typecast_INTERVALARRAY_types, typecast_INTERVALARRAY_cast, "INTERVAL"},

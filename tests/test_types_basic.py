@@ -166,12 +166,14 @@ class TypesBasicTests(ConnectingTestCase):
         curs.execute("select col from array_test where id = 2")
         self.assertEqual(curs.fetchone()[0], [])
 
-    def testEmptyArray(self):
+    def testEmptyArrayNoCast(self):
         s = self.execute("SELECT '{}' AS foo")
-        self.failUnlessEqual(s, [])
-        s = self.execute("SELECT '{}'::text[] AS foo")
-        self.failUnlessEqual(s, [])
+        self.assertEqual(s, '{}')
         s = self.execute("SELECT %s AS foo", ([],))
+        self.assertEqual(s, '{}')
+
+    def testEmptyArray(self):
+        s = self.execute("SELECT '{}'::text[] AS foo")
         self.failUnlessEqual(s, [])
         s = self.execute("SELECT 1 != ALL(%s)", ([],))
         self.failUnlessEqual(s, True)
@@ -422,6 +424,19 @@ class AdaptSubclassTest(unittest.TestCase):
         finally:
             del psycopg2.extensions.adapters[A, psycopg2.extensions.ISQLQuote]
 
+    def test_conform_subclass_precedence(self):
+
+        import psycopg2.extensions as ext
+
+        class foo(tuple):
+            def __conform__(self, proto):
+                return self
+
+            def getquoted(self):
+                return 'bar'
+
+        self.assertEqual(ext.adapt(foo((1, 2, 3))).getquoted(), 'bar')
+
 
 class ByteaParserTest(unittest.TestCase):
     """Unit test for our bytea format parser."""
@@ -439,7 +454,7 @@ class ByteaParserTest(unittest.TestCase):
         expected.
         """
         import ctypes
-        lib = ctypes.cdll.LoadLibrary(psycopg2._psycopg.__file__)
+        lib = ctypes.pydll.LoadLibrary(psycopg2._psycopg.__file__)
         cast = lib.typecast_BINARY_cast
         cast.argtypes = [ctypes.c_char_p, ctypes.c_size_t, ctypes.py_object]
         cast.restype = ctypes.py_object

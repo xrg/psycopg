@@ -139,6 +139,20 @@ class ReplicationTest(ReplicationTestCase):
 
     @skip_before_postgres(9, 4)  # slots require 9.4
     @skip_repl_if_green
+    def test_start_replication_expert_sql(self):
+        from psycopg2 import sql
+        conn = self.repl_connect(connection_factory=LogicalReplicationConnection)
+        if conn is None:
+            return
+        cur = conn.cursor()
+
+        self.create_replication_slot(cur, output_plugin='test_decoding')
+        cur.start_replication_expert(
+            sql.SQL("START_REPLICATION SLOT {slot} LOGICAL 0/00000000").format(
+                slot=sql.Identifier(self.slot)))
+
+    @skip_before_postgres(9, 4)  # slots require 9.4
+    @skip_repl_if_green
     def test_start_and_recover_from_error(self):
         conn = self.repl_connect(connection_factory=LogicalReplicationConnection)
         if conn is None:
@@ -158,6 +172,29 @@ class ReplicationTest(ReplicationTestCase):
 
         # try with correct command
         cur.start_replication(slot_name=self.slot)
+
+    @skip_before_postgres(9, 4)  # slots require 9.4
+    @skip_repl_if_green
+    def test_keepalive(self):
+        conn = self.repl_connect(connection_factory=LogicalReplicationConnection)
+        if conn is None:
+            return
+
+        cur = conn.cursor()
+
+        self.create_replication_slot(cur, output_plugin='test_decoding')
+
+        self.make_replication_events()
+
+        cur.start_replication(self.slot)
+
+        def consume(msg):
+            raise StopReplication()
+
+        self.assertRaises(StopReplication,
+            cur.consume_stream, consume, keepalive_interval=2)
+
+        conn.close()
 
     @skip_before_postgres(9, 4)     # slots require 9.4
     @skip_repl_if_green
@@ -183,7 +220,7 @@ class AsyncReplicationTest(ReplicationTestCase):
     @skip_repl_if_green
     def test_async_replication(self):
         conn = self.repl_connect(
-            connection_factory=LogicalReplicationConnection, async=1)
+            connection_factory=LogicalReplicationConnection, async_=1)
         if conn is None:
             return
 

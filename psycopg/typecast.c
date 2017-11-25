@@ -193,20 +193,13 @@ typecast_UNKNOWN_cast(const char *str, Py_ssize_t len, PyObject *curs)
     Dprintf("typecast_UNKNOWN_cast: str = '%s',"
             " len = " FORMAT_CODE_PY_SSIZE_T, str, len);
 
-    // PostgreSQL returns {} for empty array without explicit type. We convert
-    // that to list in order to handle empty lists.
-    if (len == 2 && str[0] == '{' && str[1] == '}') {
-        return PyList_New(0);
-    }
-
-    Dprintf("typecast_UNKNOWN_cast: fallback to default cast");
-
     return typecast_default.cast(str, len, curs);
 }
 
 #include "psycopg/typecast_builtins.c"
 
 #define typecast_PYDATETIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_PYDATETIMETZARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_PYDATEARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_PYTIMEARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_PYINTERVALARRAY_cast typecast_GENERIC_ARRAY_cast
@@ -214,10 +207,12 @@ typecast_UNKNOWN_cast(const char *str, Py_ssize_t len, PyObject *curs)
 /* a list of initializers, used to make the typecasters accessible anyway */
 static typecastObject_initlist typecast_pydatetime[] = {
     {"PYDATETIME", typecast_DATETIME_types, typecast_PYDATETIME_cast},
+    {"PYDATETIMETZ", typecast_DATETIMETZ_types, typecast_PYDATETIMETZ_cast},
     {"PYTIME", typecast_TIME_types, typecast_PYTIME_cast},
     {"PYDATE", typecast_DATE_types, typecast_PYDATE_cast},
     {"PYINTERVAL", typecast_INTERVAL_types, typecast_PYINTERVAL_cast},
     {"PYDATETIMEARRAY", typecast_DATETIMEARRAY_types, typecast_PYDATETIMEARRAY_cast, "PYDATETIME"},
+    {"PYDATETIMETZARRAY", typecast_DATETIMETZARRAY_types, typecast_PYDATETIMETZARRAY_cast, "PYDATETIMETZ"},
     {"PYTIMEARRAY", typecast_TIMEARRAY_types, typecast_PYTIMEARRAY_cast, "PYTIME"},
     {"PYDATEARRAY", typecast_DATEARRAY_types, typecast_PYDATEARRAY_cast, "PYDATE"},
     {"PYINTERVALARRAY", typecast_INTERVALARRAY_types, typecast_PYINTERVALARRAY_cast, "PYINTERVAL"},
@@ -226,6 +221,7 @@ static typecastObject_initlist typecast_pydatetime[] = {
 
 #ifdef HAVE_MXDATETIME
 #define typecast_MXDATETIMEARRAY_cast typecast_GENERIC_ARRAY_cast
+#define typecast_MXDATETIMETZARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_MXDATEARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_MXTIMEARRAY_cast typecast_GENERIC_ARRAY_cast
 #define typecast_MXINTERVALARRAY_cast typecast_GENERIC_ARRAY_cast
@@ -233,10 +229,12 @@ static typecastObject_initlist typecast_pydatetime[] = {
 /* a list of initializers, used to make the typecasters accessible anyway */
 static typecastObject_initlist typecast_mxdatetime[] = {
     {"MXDATETIME", typecast_DATETIME_types, typecast_MXDATE_cast},
+    {"MXDATETIMETZ", typecast_DATETIMETZ_types, typecast_MXDATE_cast},
     {"MXTIME", typecast_TIME_types, typecast_MXTIME_cast},
     {"MXDATE", typecast_DATE_types, typecast_MXDATE_cast},
     {"MXINTERVAL", typecast_INTERVAL_types, typecast_MXINTERVAL_cast},
     {"MXDATETIMEARRAY", typecast_DATETIMEARRAY_types, typecast_MXDATETIMEARRAY_cast, "MXDATETIME"},
+    {"MXDATETIMETZARRAY", typecast_DATETIMETZARRAY_types, typecast_MXDATETIMETZARRAY_cast, "MXDATETIMETZ"},
     {"MXTIMEARRAY", typecast_TIMEARRAY_types, typecast_MXTIMEARRAY_cast, "MXTIME"},
     {"MXDATEARRAY", typecast_DATEARRAY_types, typecast_MXDATEARRAY_cast, "MXDATE"},
     {"MXINTERVALARRAY", typecast_INTERVALARRAY_types, typecast_MXINTERVALARRAY_cast, "MXINTERVAL"},

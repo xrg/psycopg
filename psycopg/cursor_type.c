@@ -267,38 +267,6 @@ _mogrify(PyObject *var, PyObject *fmt, cursorObject *curs, PyObject **new)
     return 0;
 }
 
-PyObject *_psyco_curs_validate_sql_basic(
-    cursorObject *self, PyObject *sql
-  )
-{
-    /* Performs very basic validation on an incoming SQL string.
-       Returns a new reference to a str instance on success; NULL on failure,
-       after having set an exception. */
-
-    if (!sql || !PyObject_IsTrue(sql)) {
-        psyco_set_error(ProgrammingError, self,
-                         "can't execute an empty query");
-        goto fail;
-    }
-
-    if (Bytes_Check(sql)) {
-        /* Necessary for ref-count symmetry with the unicode case: */
-        Py_INCREF(sql);
-    }
-    else if (PyUnicode_Check(sql)) {
-        if (!(sql = conn_encode(self->conn, sql))) { goto fail; }
-    }
-    else {
-        /* the  is not unicode or string, raise an error */
-        PyErr_SetString(PyExc_TypeError,
-                        "argument 1 must be a string or unicode object");
-        goto fail;
-    }
-
-    return sql; /* new reference */
-    fail:
-        return NULL;
-}
 
 /* Merge together a query string and its arguments.
  *
@@ -378,7 +346,7 @@ _psyco_curs_execute(cursorObject *self,
     PyObject *fquery, *cvt = NULL;
     const char *scroll;
 
-    operation = _psyco_curs_validate_sql_basic(self, operation);
+    operation = psyco_curs_validate_sql_basic(self, operation);
 
     /* Any failure from here forward should 'goto fail' rather than 'return 0'
        directly. */
@@ -575,7 +543,7 @@ _psyco_curs_mogrify(cursorObject *self,
 {
     PyObject *fquery = NULL, *cvt = NULL;
 
-    operation = _psyco_curs_validate_sql_basic(self, operation);
+    operation = psyco_curs_validate_sql_basic(self, operation);
     if (operation == NULL) { goto cleanup; }
 
     Dprintf("psyco_curs_mogrify: starting mogrify");
@@ -1673,7 +1641,7 @@ psyco_curs_copy_expert(cursorObject *self, PyObject *args, PyObject *kwargs)
     EXC_IF_GREEN(copy_expert);
     EXC_IF_TPC_PREPARED(self->conn, copy_expert);
 
-    sql = _psyco_curs_validate_sql_basic(self, sql);
+    sql = psyco_curs_validate_sql_basic(self, sql);
 
     /* Any failure from here forward should 'goto exit' rather than
        'return NULL' directly. */

@@ -53,7 +53,9 @@
 #endif
 
 extern HIDDEN PyObject *psyco_DescriptionType;
-
+extern HIDDEN const char *srv_isolevels[];
+extern HIDDEN const char *srv_readonly[];
+extern HIDDEN const char *srv_deferrable[];
 
 /* Strip off the severity from a Postgres error message. */
 static const char *
@@ -177,8 +179,10 @@ pq_raise(connectionObject *conn, cursorObject *curs, PGresult **pgres)
 
     /* if the connection has somehow been broken, we mark the connection
        object as closed but requiring cleanup */
-    if (conn->pgconn != NULL && PQstatus(conn->pgconn) == CONNECTION_BAD)
+    if (conn->pgconn != NULL && PQstatus(conn->pgconn) == CONNECTION_BAD) {
         conn->closed = 2;
+        exc = OperationalError;
+    }
 
     if (pgres == NULL && curs != NULL)
         pgres = &curs->pgres;
@@ -212,9 +216,9 @@ pq_raise(connectionObject *conn, cursorObject *curs, PGresult **pgres)
     if (code != NULL) {
         exc = exception_from_sqlstate(code);
     }
-    else {
-        /* Fallback if there is no exception code (reported happening e.g.
-         * when the connection is closed). */
+    else if (exc == NULL) {
+        /* Fallback if there is no exception code (unless we already
+           determined that the connection was closed). */
         exc = DatabaseError;
     }
 
@@ -447,6 +451,10 @@ pq_complete_error(connectionObject *conn, PGresult **pgres, char **error)
     else {
         if (*error != NULL) {
             PyErr_SetString(OperationalError, *error);
+        } else if (PyErr_Occurred()) {
+            /* There was a Python error (e.g. in the callback). Don't clobber
+             * it with an unknown exception. (see #410) */
+            Dprintf("pq_complete_error: forwarding Python exception");
         } else {
             PyErr_SetString(OperationalError, "unknown error");
         }
@@ -479,6 +487,8 @@ int
 pq_begin_locked(connectionObject *conn, PGresult **pgres, char **error,
                 PyThreadState **tstate)
 {
+    const size_t bufsize = 256;
+    char buf[256];  /* buf size must be same as bufsize */
     int result;
 
     Dprintf("pq_begin_locked: pgconn = %p, autocommit = %d, status = %d",
@@ -489,7 +499,24 @@ pq_begin_locked(connectionObject *conn, PGresult **pgres, char **error,
         return 0;
     }
 
-    result = pq_execute_command_locked(conn, "BEGIN", pgres, error, tstate);
+    if (conn->isolevel == ISOLATION_LEVEL_DEFAULT
+            && conn->readonly == STATE_DEFAULT
+            && conn->deferrable == STATE_DEFAULT) {
+        strcpy(buf, "BEGIN");
+    }
+    else {
+        snprintf(buf, bufsize,
+            conn->server_version >= 80000 ?
+                "BEGIN%s%s%s%s" : "BEGIN;SET TRANSACTION%s%s%s%s",
+            (conn->isolevel >= 1 && conn->isolevel <= 4)
+                ? " ISOLATION LEVEL " : "",
+            (conn->isolevel >= 1 && conn->isolevel <= 4)
+                ? srv_isolevels[conn->isolevel] : "",
+            srv_readonly[conn->readonly],
+            srv_deferrable[conn->deferrable]);
+    }
+
+    result = pq_execute_command_locked(conn, buf, pgres, error, tstate);
     if (result == 0)
         conn->status = CONN_STATUS_BEGIN;
 
@@ -692,7 +719,7 @@ pq_get_guc_locked(
     Dprintf("pq_get_guc_locked: reading %s", param);
 
     size = PyOS_snprintf(query, sizeof(query), "SHOW %s", param);
-    if (size >= sizeof(query)) {
+    if (size < 0 || (size_t)size >= sizeof(query)) {
         *error = strdup("SHOW: query too large");
         goto cleanup;
     }
@@ -757,7 +784,7 @@ pq_set_guc_locked(
         size = PyOS_snprintf(query, sizeof(query),
             "SET %s TO '%s'", param, value);
     }
-    if (size >= sizeof(query)) {
+    if (size < 0 || (size_t)size >= sizeof(query)) {
         *error = strdup("SET: query too large");
     }
 
@@ -965,6 +992,9 @@ pq_execute(cursorObject *curs, const char *query, int async, int no_result, int 
 
         /* don't let pgres = NULL go to pq_fetch() */
         if (curs->pgres == NULL) {
+            if (CONNECTION_BAD == PQstatus(curs->conn->pgconn)) {
+                curs->conn->closed = 2;
+            }
             pthread_mutex_unlock(&(curs->conn->lock));
             Py_BLOCK_THREADS;
             if (!PyErr_Occurred()) {
@@ -992,6 +1022,9 @@ pq_execute(cursorObject *curs, const char *query, int async, int no_result, int 
 
         CLEARPGRES(curs->pgres);
         if (PQsendQuery(curs->conn->pgconn, query) == 0) {
+            if (CONNECTION_BAD == PQstatus(curs->conn->pgconn)) {
+                curs->conn->closed = 2;
+            }
             pthread_mutex_unlock(&(curs->conn->lock));
             Py_BLOCK_THREADS;
             PyErr_SetString(OperationalError,
@@ -1869,7 +1902,7 @@ pq_copy_both(replicationCursorObject *repl, PyObject *consume, double keepalive_
     CLEARPGRES(curs->pgres);
 
     keep_intr.tv_sec  = (int)keepalive_interval;
-    keep_intr.tv_usec = (keepalive_interval - keep_intr.tv_sec)*1.0e6;
+    keep_intr.tv_usec = (long)((keepalive_interval - keep_intr.tv_sec)*1.0e6);
 
     while (1) {
         if (pq_read_replication_message(repl, &msg) < 0) {
@@ -1964,8 +1997,12 @@ pq_fetch(cursorObject *curs, int no_result)
     Dprintf("pq_fetch: pgstatus = %s", PQresStatus(pgstatus));
 
     /* backend status message */
-    Py_XDECREF(curs->pgstatus);
-    curs->pgstatus = conn_text_from_chars(curs->conn, PQcmdStatus(curs->pgres));
+    Py_CLEAR(curs->pgstatus);
+    if (!(curs->pgstatus = conn_text_from_chars(
+            curs->conn, PQcmdStatus(curs->pgres)))) {
+        ex = -1;
+        return ex;
+    }
 
     switch(pgstatus) {
 

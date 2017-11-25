@@ -43,16 +43,16 @@ from psycopg2._psycopg import (                             # noqa
 
 try:
     from psycopg2._psycopg import (                         # noqa
-        MXDATE, MXDATETIME, MXINTERVAL, MXTIME,
-        MXDATEARRAY, MXDATETIMEARRAY, MXINTERVALARRAY, MXTIMEARRAY,
+        MXDATE, MXDATETIME, MXDATETIMETZ, MXINTERVAL, MXTIME, MXDATEARRAY,
+        MXDATETIMEARRAY, MXDATETIMETZARRAY, MXINTERVALARRAY, MXTIMEARRAY,
         DateFromMx, TimeFromMx, TimestampFromMx, IntervalFromMx, )
 except ImportError:
     pass
 
 try:
     from psycopg2._psycopg import (                         # noqa
-        PYDATE, PYDATETIME, PYINTERVAL, PYTIME,
-        PYDATEARRAY, PYDATETIMEARRAY, PYINTERVALARRAY, PYTIMEARRAY,
+        PYDATE, PYDATETIME, PYDATETIMETZ, PYINTERVAL, PYTIME, PYDATEARRAY,
+        PYDATETIMEARRAY, PYDATETIMETZARRAY, PYINTERVALARRAY, PYTIMEARRAY,
         DateFromPy, TimeFromPy, TimestampFromPy, IntervalFromPy, )
 except ImportError:
     pass
@@ -72,6 +72,7 @@ ISOLATION_LEVEL_READ_UNCOMMITTED = 4
 ISOLATION_LEVEL_READ_COMMITTED = 1
 ISOLATION_LEVEL_REPEATABLE_READ = 2
 ISOLATION_LEVEL_SERIALIZABLE = 3
+ISOLATION_LEVEL_DEFAULT = None
 
 
 """psycopg connection status values."""
@@ -162,6 +163,9 @@ def make_dsn(dsn=None, **kwargs):
             raise TypeError(
                 "you can't specify both 'database' and 'dbname' arguments")
         kwargs['dbname'] = kwargs.pop('database')
+
+    # Drop the None arguments
+    kwargs = dict((k, v) for (k, v) in kwargs.iteritems() if v is not None)
 
     if dsn is not None:
         tmp = parse_dsn(dsn)

@@ -110,6 +110,13 @@ class LargeObjectTests(LargeObjectTestCase):
         self.assertEqual(lo2.oid, lo.oid)
         self.assertEqual(lo2.closed, True)
 
+    def test_mode_defaults(self):
+        lo = self.conn.lobject()
+        lo2 = self.conn.lobject(mode=None)
+        lo3 = self.conn.lobject(mode="")
+        self.assertEqual(lo.mode, lo2.mode)
+        self.assertEqual(lo.mode, lo3.mode)
+
     def test_close_connection_gone(self):
         lo = self.conn.lobject()
         self.conn.close()
@@ -381,6 +388,13 @@ class LargeObjectTests(LargeObjectTestCase):
             self.conn.lobject(0xFFFFFFFE)
         except psycopg2.OperationalError:
             pass
+
+    def test_factory(self):
+        class lobject_subclass(psycopg2.extensions.lobject):
+            pass
+
+        lo = self.conn.lobject(lobject_factory=lobject_subclass)
+        self.assert_(isinstance(lo, lobject_subclass))
 
 decorate_all_tests(LargeObjectTests, skip_if_no_lo, skip_lo_if_green)
 

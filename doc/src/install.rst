@@ -18,7 +18,7 @@ The current `!psycopg2` implementation supports:
     NOTE: keep consistent with setup.py and the /features/ page.
 
 - Python 2 versions from 2.6 to 2.7
-- Python 3 versions from 3.1 to 3.6
+- Python 3 versions from 3.2 to 3.6
 - PostgreSQL server versions from 7.4 to 9.6
 - PostgreSQL client library version from 9.1
 
@@ -30,96 +30,62 @@ The current `!psycopg2` implementation supports:
 .. __: https://github.com/mvantellingen/psycopg2-ctypes
 
 
+
+.. index::
+    single: Install; from PyPI
+
+Binary install from PyPI
+------------------------
+
+`!psycopg2` is `available on PyPI`__ in the form of wheel_ packages for the
+most common platform (Linux, OSX, Windows): this should make you able to
+install a binary version of the module including all the dependencies simply
+using:
+
+.. code-block:: console
+
+    $ pip install psycopg2
+
+Make sure to use an up-to-date version of :program:`pip` (you can upgrade it
+using something like ``pip install -U pip``)
+
+.. __: PyPI_
+.. _PyPI: https://pypi.python.org/pypi/psycopg2/
+.. _wheel: http://pythonwheels.com/
+
 .. note::
 
-    `!psycopg2` usually depends at runtime on the libpq dynamic library.
-    However it can connect to PostgreSQL servers of any supported version,
-    independently of the version of the libpq used: just install the most
-    recent libpq version or the most practical, without trying to match it to
-    the version of the PostgreSQL server you will have to connect to.
+    The binary packages come with their own versions of a few C libraries,
+    among which ``libpq`` and ``libssl``, which will be used regardless of other
+    libraries available on the client: upgrading the system libraries will not
+    upgrade the libraries used by `!psycopg2`. Please build `!psycopg2` from
+    source if you want to maintain binary upgradeability.
 
+.. warning::
 
-Installation
-============
+    Because the `!psycopg` wheel package uses its own ``libssl`` binary, it is
+    incompatible with other extension modules binding with ``libssl`` as well,
+    for instance the Python `ssl` module: the result will likely be a
+    segfault. If you need using both `!psycopg2` and other libraries using
+    ``libssl`` please :ref:`install psycopg from source
+    <install-from-source>`.
 
-If possible, and usually it is, please :ref:`install Psycopg from a package
-<install-from-package>` available for your distribution or operating system.
+If you prefer to use the system libraries available on your client you can use
+the :command:`pip` ``--no-binary`` option:
 
-Compiling from source is a very easy task, however `!psycopg2` is a C
-extension module and as such it requires a few more things in place respect to
-a pure Python module. So, if you don't have experience compiling Python
-extension packages, *above all if you are a Windows or a Mac OS user*, please
-use a pre-compiled package and go straight to the :ref:`module usage <usage>`
-avoid bothering with the gory details.
+.. code-block:: console
 
-.. note::
+    $ pip install --no-binary psycopg2
 
-    Regardless of the way `!psycopg2` is installed, at runtime it will need to
-    use the libpq_ library. `!psycopg2` relies on the host OS to find the
-    library file (usually ``libpq.so`` or ``libpq.dll``): if the library is
-    installed in a standard location there is usually no problem; if the
-    library is in a non-standard location you will have to tell somehow
-    psycopg how to find it, which is OS-dependent (for instance setting a
-    suitable :envvar:`LD_LIBRARY_PATH` on Linux).
+which can be specified in your :file:`requirements.txt` files too, e.g. use:
 
+.. code-block:: none
 
+    psycopg2>=2.7,<2.8 --no-binary :all:
 
-.. _install-from-package:
-
-Install from a package
-----------------------
-
-.. index::
-    pair: Install; Linux
-
-**Linux**
-    Psycopg is available already packaged in many Linux distributions: look
-    for a package such as ``python-psycopg2`` using the package manager of
-    your choice.
-
-    On Debian, Ubuntu and other deb-based distributions you should just need::
-
-        sudo apt-get install python-psycopg2
-
-    to install the package with all its dependencies.
-
-
-.. index::
-    pair: Install; Mac OS X
-
-**Mac OS X**
-    Psycopg is available as a `fink package`__ in the *unstable* tree: you may
-    install it with::
-
-        fink install psycopg2-py27
-
-    .. __: http://pdb.finkproject.org/pdb/package.php/psycopg2-py27
-
-    The library is also available on `MacPorts`__ try::
-
-         sudo port install py27-psycopg2
-
-    .. __: http://www.macports.org/
-
-
-.. index::
-    pair: Install; Windows
-
-**Microsoft Windows**
-    There are two options to install a precompiled `psycopg2` package under windows:
-
-    **Option 1:** Using `pip`__ (Included in python 2.7.9+ and python 3.4+)
-    and a binary wheel package.  Launch windows' command prompt (`cmd.exe`)
-    and execute the following command::
-    
-        pip install psycopg2
-
-    .. __: https://pip.pypa.io/en/stable/installing/
-
-    **Option 2:** Jason Erickson maintains a packaged `Windows port of Psycopg`__ with
-    installation executable. Download. Double click. Done.
-
-    .. __: http://www.stickpeople.com/projects/python/win-psycopg/
+to use the last bugfix release of the `!psycopg2` 2.7 package, specifying to
+always compile it from source. Of course in this case you will have to meet
+the :ref:`build prerequisites <build-prerequisites>`.
 
 
 
@@ -131,13 +97,25 @@ Install from a package
 Install from source
 -------------------
 
+.. _source-package:
+
+You can download a copy of Psycopg source files from the `Psycopg download
+page`__ or from PyPI_.
+
+.. __: http://initd.org/psycopg/download/
+
+
+
+.. _build-prerequisites:
+
+Build prerequisites
+^^^^^^^^^^^^^^^^^^^
+
 These notes illustrate how to compile Psycopg on Linux. If you want to compile
 Psycopg on other platforms you may have to adjust some details accordingly.
 
-.. _requirements:
-
-Psycopg is a C wrapper to the libpq PostgreSQL client library. To install it
-from sources you will need:
+Psycopg is a C wrapper around the libpq_ PostgreSQL client library. To install
+it from sources you will need:
 
 - A C compiler.
 
@@ -155,12 +133,34 @@ from sources you will need:
   running ``pg_config --version``: if it returns an error or an unexpected
   version number then locate the directory containing the :program:`pg_config`
   shipped with the right libpq version (usually
-  ``/usr/lib/postgresql/X.Y/bin/``) and add it to the :envvar:`PATH`::
+  ``/usr/lib/postgresql/X.Y/bin/``) and add it to the :envvar:`PATH`:
+
+  .. code-block:: console
 
     $ export PATH=/usr/lib/postgresql/X.Y/bin/:$PATH
-    
-  You only need it to compile and install `!psycopg2`, not for its regular
-  usage.
+
+  You only need :program:`pg_config` to compile `!psycopg2`, not for its
+  regular usage.
+
+Once everything is in place it's just a matter of running the standard:
+
+.. code-block:: console
+
+    $ python setup.py build
+    $ python setup.py install
+
+
+Runtime requirements
+^^^^^^^^^^^^^^^^^^^^
+
+Unless you compile `!psycopg2` as a static library, or you install it from a
+self-contained wheel package, it will need the libpq_ library at runtime
+(usually distributed in a ``libpq.so`` or ``libpq.dll`` file).  `!psycopg2`
+relies on the host OS to find the library if the library is installed in a
+standard location there is usually no problem; if the library is in a
+non-standard location you will have to tell somehow Psycopg how to find it,
+which is OS-dependent (for instance setting a suitable
+:envvar:`LD_LIBRARY_PATH` on Linux).
 
 .. note::
 
@@ -170,40 +170,22 @@ from sources you will need:
     :program:`ldd`) if the module ``psycopg2/_psycopg.so`` is linked to the
     right ``libpq.so``.
 
+.. note::
 
+    Whatever version of libpq `!psycopg2` is compiled with, it will be
+    possible to connect to PostgreSQL servers of any supported version: just
+    install the most recent libpq version or the most practical, without
+    trying to match it to the version of the PostgreSQL server you will have
+    to connect to.
 
-.. index::
-    single: Install; from PyPI
-
-.. _package-manager:
-
-Use a Python package manager
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If the above requirements are satisfied, you can use :program:`easy_install`,
-:program:`pip` or whatever the Python package manager of the week::
-
-    $ pip install psycopg2
-
-Please refer to your package manager documentation about performing a local or
-global installation, :program:`virtualenv` (fully supported by recent Psycopg
-versions), using different Python versions and other nuances.
 
 
 .. index::
     single: setup.py
     single: setup.cfg
 
-.. _source-package:
-
-Use the source package
-^^^^^^^^^^^^^^^^^^^^^^
-
-You can download a copy of Psycopg source files from the `Psycopg download
-page`__. Once unpackaged, to compile and install the package you can run::
-
-    $ python setup.py build
-    $ sudo python setup.py install
+Non-standard builds
+^^^^^^^^^^^^^^^^^^^
 
 If you have less standard requirements such as:
 
@@ -215,12 +197,45 @@ then take a look at the ``setup.cfg`` file.
 
 Some of the options available in ``setup.cfg`` are also available as command
 line arguments of the ``build_ext`` sub-command. For instance you can specify
-an alternate :program:`pg_config` version using::
+an alternate :program:`pg_config` location using:
+
+.. code-block:: console
 
     $ python setup.py build_ext --pg-config /path/to/pg_config build
 
 Use ``python setup.py build_ext --help`` to get a list of the options
 supported.
+
+
+.. index::
+    single: debug
+    single: PSYCOPG_DEBUG
+
+.. _debug-build:
+
+Creating a debug build
+^^^^^^^^^^^^^^^^^^^^^^
+
+In case of problems, Psycopg can be configured to emit detailed debug
+messages, which can be very useful for diagnostics and to report a bug. In
+order to create a debug package:
+
+- `Download`__ and unpack the Psycopg source package.
+
+- Edit the ``setup.cfg`` file adding the ``PSYCOPG_DEBUG`` flag to the
+  ``define`` option.
+
+- :ref:`Compile and install <source-package>` the package.
+
+- Set the :envvar:`PSYCOPG_DEBUG` environment variable:
+
+.. code-block:: console
+
+    $ export PSYCOPG_DEBUG=1
+
+- Run your program (making sure that the `!psycopg2` package imported is the
+  one you just compiled and not e.g. the system one): you will have a copious
+  stream of informations printed on stderr.
 
 .. __: http://initd.org/psycopg/download/
 
@@ -232,13 +247,14 @@ supported.
 .. _test-suite:
 
 Running the test suite
-^^^^^^^^^^^^^^^^^^^^^^
+----------------------
 
-The included ``Makefile`` allows to run all the tests included in the
-distribution. Just run::
+Once `!psycopg2` is installed you can run the test suite to verify it is
+working correctly. You can run:
 
-    make
-    make check
+.. code-block:: console
+
+    $ python -c "from psycopg2 import tests; tests.unittest.main(defaultTest='tests.test_suite')" --verbose
 
 The tests run against a database called ``psycopg2_test`` on UNIX socket and
 the standard port. You can configure a different database to run the test by
@@ -253,38 +269,6 @@ The database should already exist before running the tests.
 
 
 
-.. index::
-    single: debug
-    single: PSYCOPG_DEBUG
-
-.. _debug-build:
-
-Creating a debug build
-----------------------
-
-In case of problems, Psycopg can be configured to emit detailed debug
-messages, which can be very useful for diagnostics and to report a bug. In
-order to create a debug package:
-
-- `Download`__ and unpack the Psycopg source package.
-
-- Edit the ``setup.cfg`` file adding the ``PSYCOPG_DEBUG`` flag to the
-  ``define`` option.
-
-- :ref:`Compile and install <source-package>` the package.
-
-- Set the :envvar:`PSYCOPG_DEBUG` environment variable::
-
-    $ export PSYCOPG_DEBUG=1
-
-- Run your program (making sure that the `!psycopg2` package imported is the
-  one you just compiled and not e.g. the system one): you will have a copious
-  stream of informations printed on stderr.
-
-.. __: http://initd.org/psycopg/download/
-
-
-
 .. _other-problems:
 
 If you still have problems
@@ -292,7 +276,7 @@ If you still have problems
 
 Try the following. *In order:*
 
-- Read again the :ref:`requirements <requirements>`.
+- Read again the :ref:`build-prerequisites`.
 
 - Read the :ref:`FAQ <faq-compile>`.
 
@@ -305,5 +289,4 @@ Try the following. *In order:*
   ever and about the quality time you have wasted figuring out the correct
   :envvar:`ARCHFLAGS`. Especially useful from the Starbucks near you.
 
-.. __: http://mail.postgresql.org/mj/mj_wwwusr/domain=postgresql.org?func=lists-long-full&extra=psycopg
-
+.. __: https://lists.postgresql.org/mj/mj_wwwusr?func=lists-long-full&extra=psycopg

@@ -22,21 +22,15 @@
 # License for more details.
 
 
-# Use unittest2 if available. Otherwise mock a skip facility with warnings.
-
+import re
 import os
-import platform
 import sys
 import select
+import platform
+import unittest
 from functools import wraps
 from testconfig import dsn, repl_dsn
 
-try:
-    import unittest2
-    unittest = unittest2
-except ImportError:
-    import unittest
-    unittest2 = None
 
 if hasattr(unittest, 'skipIf'):
     skip = unittest.skip
@@ -50,7 +44,9 @@ else:
             @wraps(f)
             def skipIf__(self):
                 if cond:
-                    warnings.warn(msg)
+                    with warnings.catch_warnings():
+                        warnings.simplefilter('always', UserWarning)
+                        warnings.warn(msg)
                     return
                 else:
                     return f(self)
@@ -61,7 +57,9 @@ else:
         return skipIf(True, msg)
 
     def skipTest(self, msg):
-        warnings.warn(msg)
+        with warnings.catch_warnings():
+            warnings.simplefilter('always', UserWarning)
+            warnings.warn(msg)
         return
 
     unittest.TestCase.skipTest = skipTest
@@ -76,6 +74,13 @@ if (not hasattr(unittest.TestCase, 'assert_')
     unittest.TestCase.failUnless = unittest.TestCase.assertTrue
     unittest.TestCase.assertEquals = unittest.TestCase.assertEqual
     unittest.TestCase.failUnlessEqual = unittest.TestCase.assertEqual
+
+
+def assertDsnEqual(self, dsn1, dsn2, msg=None):
+    """Check that two conninfo string have the same content"""
+    self.assertEqual(set(dsn1.split()), set(dsn2.split()), msg)
+
+unittest.TestCase.assertDsnEqual = assertDsnEqual
 
 
 class ConnectingTestCase(unittest.TestCase):
@@ -95,6 +100,18 @@ class ConnectingTestCase(unittest.TestCase):
         for conn in self._conns:
             if not conn.closed:
                 conn.close()
+
+    def assertQuotedEqual(self, first, second, msg=None):
+        """Compare two quoted strings disregarding eventual E'' quotes"""
+        def f(s):
+            if isinstance(s, unicode):
+                return re.sub(r"\bE'", "'", s)
+            elif isinstance(first, bytes):
+                return re.sub(br"\bE'", b"'", s)
+            else:
+                return s
+
+        return self.assertEqual(f(first), f(second), msg)
 
     def connect(self, **kwargs):
         try:
@@ -130,7 +147,7 @@ class ConnectingTestCase(unittest.TestCase):
         import psycopg2
         try:
             conn = self.connect(**kwargs)
-            if conn.async == 1:
+            if conn.async_ == 1:
                 self.wait(conn)
         except psycopg2.OperationalError, e:
             # If pgcode is not set it is a genuine connection error
@@ -296,7 +313,7 @@ def libpq_version():
     import psycopg2
     v = psycopg2.__libpq_version__
     if v >= 90100:
-        v = psycopg2.extensions.libpq_version()
+        v = min(v, psycopg2.extensions.libpq_version())
     return v
 
 
