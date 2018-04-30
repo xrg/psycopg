@@ -99,20 +99,6 @@ Real dictionary cursor
 
 .. versionadded:: 2.3
 
-These objects require :py:func:`collections.namedtuple` to be found, so it is
-available out-of-the-box only from Python 2.6. Anyway, the namedtuple
-implementation is compatible with previous Python versions, so all you
-have to do is to `download it`__ and make it available where we
-expect it to be... ::
-
-    from somewhere import namedtuple
-    import collections
-    collections.namedtuple = namedtuple
-    from psycopg.extras import NamedTupleConnection
-    # ...
-
-.. __: http://code.activestate.com/recipes/500261-named-tuples/
-
 .. autoclass:: NamedTupleCursor
 
 .. autoclass:: NamedTupleConnection
@@ -403,7 +389,7 @@ The individual messages in the replication stream are represented by
 
             class LogicalStreamConsumer(object):
 
-                ...
+                # ...
 
                 def __call__(self, msg):
                     self.process_message(msg.payload)
@@ -501,7 +487,7 @@ The individual messages in the replication stream are represented by
       from datetime import datetime
 
       def consume(msg):
-          ...
+          # ...
 
       keepalive_interval = 10.0
       while True:

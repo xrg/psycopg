@@ -61,8 +61,8 @@ except ImportError:
     release = version
 
 intersphinx_mapping = {
-    'py': ('http://docs.python.org/2', None),
-    'py3': ('http://docs.python.org/3', None),
+    'py': ('https://docs.python.org/2', None),
+    'py3': ('https://docs.python.org/3', None),
     }
 
 # Pattern to generate links to the bug tracker
@@ -100,6 +100,10 @@ default_role = 'obj'
 # If true, sectionauthor and moduleauthor directives will be shown in the
 # output. They are ignored by default.
 #show_authors = False
+
+# Using 'python' instead of the default gives warnings if parsing an example
+# fails, instead of defaulting to none
+highlight_language = 'python'
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'

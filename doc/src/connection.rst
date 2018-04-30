@@ -41,11 +41,6 @@ The ``connection`` class
             previously only valid PostgreSQL identifiers were accepted as
             cursor name.
 
-        .. warning::
-            It is unsafe to expose the *name* to an untrusted source, for
-            instance you shouldn't allow *name* to be read from a HTML form.
-            Consider it as part of the query, not as a query parameter.
-
         The *cursor_factory* argument can be used to create non-standard
         cursors. The class returned must be a subclass of
         `psycopg2.extensions.cursor`. See :ref:`subclassing-cursor` for
@@ -551,7 +546,7 @@ The ``connection`` class
         the session.
 
         .. doctest::
-            :options: NORMALIZE_WHITESPACE
+            :options: +NORMALIZE_WHITESPACE
 
             >>> cur.execute("CREATE TABLE foo (id serial PRIMARY KEY);")
             >>> pprint(conn.notices)
@@ -726,7 +721,7 @@ The ``connection`` class
         `psycopg2.extensions`: see :ref:`connection-status-constants`
         for the available values.
 
-        The status is undefined for `closed` connectons.
+        The status is undefined for `closed` connections.
 
 
     .. method:: lobject([oid [, mode [, new_oid [, new_file [, lobject_factory]]]]])

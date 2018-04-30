@@ -113,9 +113,14 @@ class TypesExtrasTests(ConnectingTestCase):
             psycopg2.extensions.adapt, Foo(), ext.ISQLQuote, None)
         try:
             psycopg2.extensions.adapt(Foo(), ext.ISQLQuote, None)
-        except psycopg2.ProgrammingError, err:
+        except psycopg2.ProgrammingError as err:
             self.failUnless(str(err) == "can't adapt type 'Foo'")
 
+    def test_point_array(self):
+        # make sure a point array is never casted to a float array,
+        # see https://github.com/psycopg/psycopg2/issues/613
+        s = self.execute("""SELECT '{"(1,2)","(3,4)"}' AS foo""")
+        self.failUnless(s == """{"(1,2)","(3,4)"}""")
 
 def skip_if_no_hstore(f):
     @wraps(f)
